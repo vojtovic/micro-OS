@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Getting Started • micro_arch</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="container header-row">
+      <a class="brand" href="index.html">micro_arch docs</a>
+      <nav>
+        <a href="index.html">Home</a>
+        <a class="active" href="getting-started.html">Getting Started</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="command-reference.html">Command Reference</a>
+        <a href="use-cases.html">Use Cases</a>
+        <a href="tutorials.html">Tutorials</a>
+        <a href="testing-checklist.html">Testing Checklist</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <h1>Getting Started</h1>
+    <p class="lead">Set up your local toolchain and reach the interactive shell on your ESP32-S3 device.</p>
+
+    <section class="card">
+      <h2>Prerequisites</h2>
+      <ul>
+        <li>ESP32-S3 board (configured in <code>platformio.ini</code> as <code>freenove_esp32_s3_wroom</code>)</li>
+        <li>PlatformIO CLI installed</li>
+        <li>USB serial connection to your board</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Build, flash, and monitor</h2>
+      <pre><code>cd /path/to/micro_arch
+pio run
+pio run -t upload
+pio device monitor -b 115200</code></pre>
+
+      <p>Project defaults:</p>
+      <ul>
+        <li>Framework: ESP-IDF</li>
+        <li>Flash size: 16 MB with custom partition table (<code>partitions_16MB.csv</code>)</li>
+        <li>Monitor speed: 115200</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Expected boot sequence</h2>
+      <ol>
+        <li>Kernel log ring buffer is initialized.</li>
+        <li>Boot beep plays on buzzer pin.</li>
+        <li>PSRAM info is printed.</li>
+        <li>Virtual console ring buffer initializes in PSRAM.</li>
+        <li>Internal LittleFS mounts at <code>/sys</code>.</li>
+        <li>Default <code>/sys/etc/fstab</code> is created if missing.</li>
+        <li>SPI and I2C buses initialize.</li>
+        <li>Filesystems are mounted from <code>fstab</code> entries.</li>
+        <li>Filesystem skeleton is ensured under <code>/sdcard</code>.</li>
+        <li>Service registry is initialized and core services are registered.</li>
+        <li>Shell commands are registered and prompt starts.</li>
+      </ol>
+    </section>
+
+    <section class="card">
+      <h2>First commands to run</h2>
+      <pre><code>help
+uname
+devls -v
+fstab
+vconsole status
+service list
+lsblk
+df
+pwd
+ls</code></pre>
+    </section>
+
+    <section class="card">
+      <h2>Expected output samples</h2>
+      <p>Exact values will differ by board and storage, but output should look similar to this:</p>
+      <pre><code>[/sdcard] uarch&gt; uname
+micro_arch 0.2.0 ESP32-S3 (rev X, 2 cores) ESP-IDF v5.x FreeRTOS
+
+[/sdcard] uarch&gt; devls -v
+DEVICE           STATUS       TYPE
+psram0           ready        memory
+spi3 (SD)        ready        bus
+sd0              mounted      storage
+i2c0             ready        bus
+cardkb           ready        input
+littlefs0        mounted      filesystem
+
+[/sdcard] uarch&gt; lsblk
+NAME         TYPE    SIZE  MOUNT   FS
+flash0       flash   16MB
+internal     part    ....  /sys    littlefs
+sd0          sd            /sdcard fat32
+
+[/sdcard] uarch&gt; service list
+SERVICE          VER  STATE
+klog               1  running
+bus                1  running
+internal_fs        1  running
+vconsole           1  running
+storage            1  running</code></pre>
+    </section>
+
+    <section class="card">
+      <h2>Common errors and what to do</h2>
+      <table>
+        <thead>
+          <tr><th>Error / symptom</th><th>What to do</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>SD mount failed</code> during boot</td><td>Check SD card insertion, FAT formatting, SD wiring (CLK/MOSI/MISO/CS), then run <code>mount</code> manually and inspect <code>devls -v</code>.</td></tr>
+          <tr><td><code>PSRAM not detected</code></td><td>Verify board target in <code>platformio.ini</code>, then reboot and re-check with <code>mem</code>/<code>free</code>. If still missing, verify hardware/board variant.</td></tr>
+          <tr><td><code>Unknown command</code></td><td>Run <code>help</code> and use exact command names from command reference.</td></tr>
+          <tr><td><code>Cannot open</code> / <code>Not found</code></td><td>Check current directory with <code>pwd</code>, list files with <code>ls</code>, and use absolute paths (<code>/sdcard/... </code> or <code>/sys/... </code>).</td></tr>
+          <tr><td><code>rmdir ... (Permission denied)</code></td><td>Directory is usually not empty. Check with <code>ls</code>/<code>tree</code>, remove files first (<code>rm</code>), then run <code>rmdir</code> again.</td></tr>
+          <tr><td><code>Cannot load: ...</code> from <code>config</code></td><td>Config file path does not exist or cannot be opened. Verify with <code>pwd</code> + <code>ls</code>, then use absolute path.</td></tr>
+          <tr><td>No response from I2C device</td><td>Run <code>i2cdetect</code>. If address (e.g. <code>0x5F</code>) is missing, check power, SDA/SCL pins, and pull-ups.</td></tr>
+          <tr><td>Filesystem seems inconsistent after power loss</td><td>Use <code>shutdown</code> for clean unmount/restart and run <code>sync</code> to inspect mount/write status before reset.</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">micro_arch docs site • Getting Started</div>
+  </footer>
+</body>
+</html>

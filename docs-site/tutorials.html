@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tutorials • micro_arch</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="container header-row">
+      <a class="brand" href="index.html">micro_arch docs</a>
+      <nav>
+        <a href="index.html">Home</a>
+        <a href="getting-started.html">Getting Started</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="command-reference.html">Command Reference</a>
+        <a href="use-cases.html">Use Cases</a>
+        <a class="active" href="tutorials.html">Tutorials</a>
+        <a href="testing-checklist.html">Testing Checklist</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <h1>Detailed Tutorials</h1>
+    <p class="lead">Hands-on guides for common operator and developer tasks.</p>
+
+    <section class="card">
+      <h2>Tutorial 1: First successful boot session</h2>
+      <ol>
+        <li>Build and flash firmware.</li>
+        <li>Open serial monitor at <code>115200</code>.</li>
+        <li>Wait for prompt <code>[...] uarch&gt;</code>.</li>
+        <li>Run baseline checks:
+          <pre><code>help
+uname
+uptime
+devls -v
+lsblk
+df</code></pre>
+        </li>
+        <li>Confirm both <code>/sys</code> and <code>/sdcard</code> are visible when expected.</li>
+      </ol>
+      <p><strong>Expected result:</strong> prompt is responsive, <code>devls -v</code> reports <code>sd0 mounted</code> (if SD inserted), and <code>lsblk</code> shows <code>internal</code> + <code>sd0</code>.</p>
+    </section>
+
+    <section class="card">
+      <h2>Tutorial 2: Create a maintenance workspace on SD</h2>
+      <ol>
+        <li>Move to SD root:
+          <pre><code>cd /sdcard
+pwd</code></pre>
+        </li>
+        <li>Create structure:
+          <pre><code>mkdir ops
+mkdir ops/reports
+mkdir ops/scripts</code></pre>
+        </li>
+        <li>Write and inspect report:
+          <pre><code>write ops/reports/session.txt micro_arch field test run 1
+append ops/reports/session.txt bus healthy
+cat ops/reports/session.txt
+wc ops/reports/session.txt</code></pre>
+        </li>
+        <li>Audit tree and storage:
+          <pre><code>tree ops
+du ops
+df</code></pre>
+        </li>
+      </ol>
+      <p><strong>Expected result:</strong> directory <code>/sdcard/ops</code> exists, <code>session.txt</code> contains two lines, and <code>du ops</code> reports non-zero usage.</p>
+    </section>
+
+    <section class="card">
+      <h2>Tutorial 3: Script repeatable diagnostics</h2>
+      <ol>
+        <li>Create script file:
+          <pre><code>write /sdcard/tmp/diag.scr echo --- diag start ---
+append /sdcard/tmp/diag.scr uptime
+append /sdcard/tmp/diag.scr free
+append /sdcard/tmp/diag.scr devls
+append /sdcard/tmp/diag.scr i2cdetect
+append /sdcard/tmp/diag.scr echo --- diag end ---</code></pre>
+        </li>
+        <li>Run it:
+          <pre><code>source /sdcard/tmp/diag.scr</code></pre>
+        </li>
+        <li>Inspect captured shell output:
+          <pre><code>vconsole tail 30</code></pre>
+        </li>
+        <li>Measure execution time:
+          <pre><code>time source /sdcard/tmp/diag.scr</code></pre>
+        </li>
+      </ol>
+      <p><strong>Expected result:</strong> <code>source</code> executes all commands in order, <code>vconsole tail</code> shows recent output lines, and <code>time ...</code> prints a <code>real X.XXX s</code> line.</p>
+    </section>
+
+    <section class="card">
+      <h2>Tutorial 4: Configure boot automation with init.conf</h2>
+      <ol>
+        <li>Prepare boot command list:
+          <pre><code>write /sdcard/etc/init.conf echo boot-sequence started
+append /sdcard/etc/init.conf devls
+append /sdcard/etc/init.conf df
+append /sdcard/etc/init.conf note boot script executed</code></pre>
+        </li>
+        <li>Reboot:
+          <pre><code>reboot</code></pre>
+        </li>
+        <li>After restart, verify side effects:
+          <pre><code>note
+dmesg</code></pre>
+        </li>
+      </ol>
+      <p><strong>Expected result:</strong> after reboot, commands from <code>/sdcard/etc/init.conf</code> run automatically and their effects are visible in <code>dmesg</code> / <code>note</code>.</p>
+    </section>
+
+    <section class="card">
+      <h2>When a tutorial step fails</h2>
+      <ol>
+        <li>Run <code>pwd</code> and <code>ls</code> to confirm you are in the expected path.</li>
+        <li>Run <code>devls -v</code> to check storage and bus readiness.</li>
+        <li>If SD-related command fails, run <code>mount</code> and retry the step.</li>
+        <li>If command is not recognized, run <code>help</code> and verify syntax.</li>
+        <li>Capture logs with <code>dmesg</code> and include the failing command + output in your issue notes.</li>
+      </ol>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">micro_arch docs site • Tutorials</div>
+  </footer>
+</body>
+</html>

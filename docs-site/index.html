@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>micro_arch Documentation</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="container header-row">
+      <a class="brand" href="index.html">micro_arch docs</a>
+      <nav>
+        <a class="active" href="index.html">Home</a>
+        <a href="getting-started.html">Getting Started</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="command-reference.html">Command Reference</a>
+        <a href="use-cases.html">Use Cases</a>
+        <a href="tutorials.html">Tutorials</a>
+        <a href="testing-checklist.html">Testing Checklist</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <h1>micro_arch Documentation</h1>
+    <p class="lead">
+      micro_arch is an early-stage, Arch-inspired micro-OS shell environment for ESP32-S3 using ESP-IDF and PlatformIO.
+      It boots to a CLI, mounts storage, initializes system buses, and exposes Linux-style commands for file, system,
+      and hardware diagnostics.
+    </p>
+
+    <p>
+      <span class="badge ok">PlatformIO + ESP-IDF</span>
+      <span class="badge ok">ESP32-S3 target</span>
+      <span class="badge warn">Project status: early foundation phase</span>
+    </p>
+
+    <section class="grid cols-2">
+      <article class="card">
+        <h3>What currently works</h3>
+        <ul>
+          <li>Boot pipeline with startup diagnostics and interactive shell</li>
+          <li>SD card mount at <code>/sdcard</code> and internal LittleFS mount at <code>/sys</code></li>
+          <li>Boot-time mount orchestration from <code>/sys/etc/fstab</code></li>
+          <li>Boot-time filesystem scaffolding and optional startup script execution</li>
+          <li>PSRAM-backed virtual console with tail/clear/status tooling</li>
+          <li>In-memory service registry with <code>service</code> CLI introspection</li>
+          <li>INI configuration parser via <code>config</code> command</li>
+          <li>Broad command surface for file operations, system info, and hardware probing</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <h3>What comes next</h3>
+        <ul>
+          <li>Service-layer stabilization</li>
+          <li>Module runtime and package workflow</li>
+          <li>Display stack and networking expansion</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="card">
+      <h2>Docs map</h2>
+      <table>
+        <thead>
+          <tr><th>Page</th><th>Purpose</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><a href="getting-started.html">Getting Started</a></td><td>Environment setup, build, flash, monitor, and first interaction.</td></tr>
+          <tr><td><a href="architecture.html">Architecture</a></td><td>Boot flow, storage model, bus initialization, and shell subsystem.</td></tr>
+          <tr><td><a href="command-reference.html">Command Reference</a></td><td>Current built-in command catalog grouped by domain.</td></tr>
+          <tr><td><a href="use-cases.html">Use Cases</a></td><td>Practical scenarios for diagnostics, scripting, and field operation.</td></tr>
+          <tr><td><a href="tutorials.html">Tutorials</a></td><td>Hands-on walkthroughs from first boot to automation.</td></tr>
+          <tr><td><a href="testing-checklist.html">Testing Checklist</a></td><td>Step-by-step pass/fail checklist to validate newly added commands.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+  </main>
+
+  <footer>
+    <div class="container">micro_arch docs site • generated from current codebase behavior</div>
+  </footer>
+</body>
+</html>

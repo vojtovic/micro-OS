@@ -1,0 +1,1 @@
+{"nodes": [{"id": "src_shell_cmd_system_h", "label": "cmd_system.h", "file_type": "code", "source_file": "src/shell/cmd_system.h", "source_location": "L1"}], "edges": [{"source": "src_shell_cmd_system_h", "target": "esp_err", "relation": "imports", "confidence": "EXTRACTED", "source_file": "src/shell/cmd_system.h", "source_location": "L4", "weight": 1.0}], "raw_calls": []}

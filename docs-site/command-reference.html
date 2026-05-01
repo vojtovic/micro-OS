@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Command Reference • micro_arch</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="container header-row">
+      <a class="brand" href="index.html">micro_arch docs</a>
+      <nav>
+        <a href="index.html">Home</a>
+        <a href="getting-started.html">Getting Started</a>
+        <a href="architecture.html">Architecture</a>
+        <a class="active" href="command-reference.html">Command Reference</a>
+        <a href="use-cases.html">Use Cases</a>
+        <a href="tutorials.html">Tutorials</a>
+        <a href="testing-checklist.html">Testing Checklist</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <h1>Command Reference</h1>
+    <p class="lead">Current shell command set registered in firmware.</p>
+
+    <section class="card">
+      <h2>Core shell commands</h2>
+      <table>
+        <thead><tr><th>Command</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>help</code></td><td>List available commands.</td></tr>
+          <tr><td><code>reboot</code></td><td>Restart the board immediately.</td></tr>
+          <tr><td><code>mem</code></td><td>Show internal RAM and PSRAM totals/free.</td></tr>
+          <tr><td><code>mount</code></td><td>Mount SD card at <code>/sdcard</code>.</td></tr>
+          <tr><td><code>unmount</code></td><td>Unmount SD card.</td></tr>
+          <tr><td><code>cd [path]</code></td><td>Change working directory (defaults to <code>/sdcard</code>). Supports <code>.</code> and <code>..</code> path normalization.</td></tr>
+          <tr><td><code>pwd</code></td><td>Print current working directory.</td></tr>
+          <tr><td><code>ls [path]</code></td><td>List directory contents.</td></tr>
+          <tr><td><code>cat &lt;file&gt;</code></td><td>Print file content.</td></tr>
+          <tr><td><code>history</code></td><td>Show recent command history.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>File and script commands</h2>
+      <table>
+        <thead><tr><th>Command</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>write &lt;file&gt; &lt;text...&gt;</code></td><td>Overwrite file with text + newline.</td></tr>
+          <tr><td><code>append &lt;file&gt; &lt;text...&gt;</code></td><td>Append text + newline to file.</td></tr>
+          <tr><td><code>mkdir &lt;path&gt;</code></td><td>Create directory.</td></tr>
+          <tr><td><code>rmdir &lt;path&gt;</code></td><td>Remove empty directory.</td></tr>
+          <tr><td><code>rm &lt;file&gt;</code></td><td>Remove file.</td></tr>
+          <tr><td><code>touch &lt;file&gt;</code></td><td>Create empty file if missing.</td></tr>
+          <tr><td><code>stat &lt;path&gt;</code></td><td>Show type and size.</td></tr>
+          <tr><td><code>df</code></td><td>Show <code>/sdcard</code> and <code>/sys</code> capacity/usage.</td></tr>
+          <tr><td><code>cp &lt;src&gt; &lt;dst&gt;</code></td><td>Copy file.</td></tr>
+          <tr><td><code>mv &lt;src&gt; &lt;dst&gt;</code></td><td>Rename/move file.</td></tr>
+          <tr><td><code>head [-n N] &lt;file&gt;</code></td><td>Show first lines.</td></tr>
+          <tr><td><code>tail [-n N] &lt;file&gt;</code></td><td>Show last lines (up to 32-line buffer).</td></tr>
+          <tr><td><code>grep &lt;pattern&gt; &lt;file&gt;</code></td><td>Substring search with line numbers.</td></tr>
+          <tr><td><code>wc &lt;file&gt;</code></td><td>Print line/word/byte counts.</td></tr>
+          <tr><td><code>hexdump &lt;file&gt; [offset] [length]</code></td><td>Hex and ASCII view.</td></tr>
+          <tr><td><code>tree [path]</code></td><td>Recursive directory listing (depth-limited).</td></tr>
+          <tr><td><code>note [text...]</code></td><td>Append timestamped note to <code>/sys/log/notes.log</code> or print notes.</td></tr>
+          <tr><td><code>source &lt;script&gt;</code></td><td>Execute command script line-by-line.</td></tr>
+          <tr><td><code>find &lt;pattern&gt; [path]</code></td><td>Recursive name search.</td></tr>
+          <tr><td><code>du [path]</code></td><td>Recursive size summary.</td></tr>
+          <tr><td><code>basename &lt;path&gt;</code></td><td>Path tail helper.</td></tr>
+          <tr><td><code>dirname &lt;path&gt;</code></td><td>Path parent helper.</td></tr>
+          <tr><td><code>test &lt;-f|-d|-e|-s&gt; &lt;path&gt;</code></td><td>Existence/type checks by exit code.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>System commands</h2>
+      <table>
+        <thead><tr><th>Command</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>uname</code></td><td>OS/chip/IDF summary string.</td></tr>
+          <tr><td><code>uptime</code></td><td>Time since boot.</td></tr>
+          <tr><td><code>date</code></td><td>RTC placeholder status.</td></tr>
+          <tr><td><code>ps</code></td><td>FreeRTOS task list.</td></tr>
+          <tr><td><code>clear</code></td><td>Clear terminal screen.</td></tr>
+          <tr><td><code>echo &lt;text...&gt;</code></td><td>Print text.</td></tr>
+          <tr><td><code>hostname</code></td><td>Print hostname (<code>micro_arch</code>).</td></tr>
+          <tr><td><code>env</code></td><td>Print environment-like board info.</td></tr>
+          <tr><td><code>free</code></td><td>Memory table (IRAM/PSRAM).</td></tr>
+          <tr><td><code>lscpu</code></td><td>CPU architecture/features summary.</td></tr>
+          <tr><td><code>shutdown</code></td><td>Unmount filesystems then restart.</td></tr>
+          <tr><td><code>lsblk</code></td><td>Show flash partitions and SD status.</td></tr>
+          <tr><td><code>which &lt;cmd&gt;</code></td><td>Search in <code>/sdcard/bin</code> and <code>/sdcard/drivers</code>.</td></tr>
+          <tr><td><code>lsmod</code></td><td>List installed <code>.elf</code> files in drivers folder.</td></tr>
+          <tr><td><code>modinfo &lt;module&gt;</code></td><td>Show file-level metadata for module file.</td></tr>
+          <tr><td><code>dmesg</code></td><td>Dump in-memory kernel log ring buffer.</td></tr>
+          <tr><td><code>sleep &lt;seconds&gt;</code></td><td>Delay execution.</td></tr>
+          <tr><td><code>time &lt;command...&gt;</code></td><td>Measure command runtime.</td></tr>
+          <tr><td><code>crc32 &lt;file&gt;</code></td><td>Compute CRC32 checksum.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Diagnostics commands</h2>
+      <table>
+        <thead><tr><th>Command</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>i2cdetect</code></td><td>Probe I2C addresses and print scan table.</td></tr>
+          <tr><td><code>i2cget &lt;addr&gt; &lt;reg&gt; [len]</code></td><td>Read bytes from I2C register.</td></tr>
+          <tr><td><code>i2cset &lt;addr&gt; &lt;reg&gt; &lt;value...&gt;</code></td><td>Write bytes to I2C register.</td></tr>
+          <tr><td><code>devls [-v]</code></td><td>List core devices and readiness/mount status.</td></tr>
+          <tr><td><code>watchdog &lt;status|feed&gt;</code></td><td>Watchdog status or manual feed operation.</td></tr>
+          <tr><td><code>loglevel [tag] &lt;level&gt;</code></td><td>Set global or per-tag logging verbosity.</td></tr>
+          <tr><td><code>gpio read|write|mode ...</code></td><td>Basic GPIO diagnostics and control.</td></tr>
+          <tr><td><code>sync</code></td><td>Show filesystem mount/write status and clean-write guidance.</td></tr>
+          <tr><td><code>beep [freq_hz] [duration_ms]</code></td><td>Play buzzer tone using LEDC.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Configuration and service commands</h2>
+      <table>
+        <thead><tr><th>Command</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>fstab</code></td><td>Show parsed filesystem mount entries from <code>/sys/etc/fstab</code>.</td></tr>
+          <tr><td><code>config &lt;file&gt;</code></td><td>Load and dump an INI config file.</td></tr>
+          <tr><td><code>config &lt;file&gt; &lt;section&gt;</code></td><td>Dump only one INI section.</td></tr>
+          <tr><td><code>config &lt;file&gt; &lt;section.key&gt;</code></td><td>Print a single INI value.</td></tr>
+          <tr><td><code>service list</code></td><td>List registered runtime services and state.</td></tr>
+          <tr><td><code>service info &lt;name&gt;</code></td><td>Show detailed info for one registered service.</td></tr>
+          <tr><td><code>vconsole status</code></td><td>Show virtual console buffer/line-index usage and stdout mode.</td></tr>
+          <tr><td><code>vconsole clear</code></td><td>Clear virtual console ring buffer.</td></tr>
+          <tr><td><code>vconsole tail [n]</code></td><td>Show last buffered shell lines from virtual console.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>Error quick-reference</h2>
+      <table>
+        <thead><tr><th>Message</th><th>Meaning</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td><code>Unknown command: ...</code></td><td>Command is not registered or has typo.</td><td>Run <code>help</code>, then retry exact command name.</td></tr>
+          <tr><td><code>Cannot open: /path</code></td><td>File/path does not exist or storage unavailable.</td><td>Check <code>pwd</code>, <code>ls</code>, and storage state via <code>devls -v</code>, <code>lsblk</code>.</td></tr>
+          <tr><td><code>No such directory: ...</code></td><td><code>cd</code> target missing.</td><td>Create with <code>mkdir</code> or correct path.</td></tr>
+          <tr><td><code>rmdir failed: ... (Permission denied)</code></td><td>Directory is not empty.</td><td>Remove files/subfolders first, then run <code>rmdir</code>.</td></tr>
+          <tr><td><code>I2C read/write failed</code></td><td>Device not reachable or bus issue.</td><td>Run <code>i2cdetect</code>, verify address/power/wiring.</td></tr>
+          <tr><td><code>Cannot load: ...</code></td><td><code>config</code> could not open the requested file.</td><td>Check path and filename; prefer absolute path.</td></tr>
+          <tr><td><code>SD mount failed: ...</code></td><td>Card mount unsuccessful.</td><td>Reinsert card, verify FAT format and SD pins, retry <code>mount</code>.</td></tr>
+          <tr><td><code>WDT feed error: ...</code></td><td>Watchdog call failed in current task context.</td><td>Use <code>watchdog status</code> first and avoid long blocking operations without checks.</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">micro_arch docs site • Command Reference</div>
+  </footer>
+</body>
+</html>

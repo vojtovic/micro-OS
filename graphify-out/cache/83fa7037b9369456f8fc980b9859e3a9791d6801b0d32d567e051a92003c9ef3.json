@@ -1,0 +1,1 @@
+{"nodes": [{"id": "src_shell_shell_h", "label": "shell.h", "file_type": "code", "source_file": "src/shell/shell.h", "source_location": "L1"}], "edges": [{"source": "src_shell_shell_h", "target": "esp_err", "relation": "imports", "confidence": "EXTRACTED", "source_file": "src/shell/shell.h", "source_location": "L4", "weight": 1.0}], "raw_calls": []}

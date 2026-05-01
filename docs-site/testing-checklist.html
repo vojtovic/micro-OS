@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Testing Checklist • micro_arch</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="container header-row">
+      <a class="brand" href="index.html">micro_arch docs</a>
+      <nav>
+        <a href="index.html">Home</a>
+        <a href="getting-started.html">Getting Started</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="command-reference.html">Command Reference</a>
+        <a href="use-cases.html">Use Cases</a>
+        <a href="tutorials.html">Tutorials</a>
+        <a class="active" href="testing-checklist.html">Testing Checklist</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <h1>Testing Checklist</h1>
+    <p class="lead">Run this to validate the newly added command surface end-to-end.</p>
+
+    <section class="card">
+      <h2>0) Baseline health</h2>
+      <pre><code>uname
+devls -v
+lsblk
+fstab
+vconsole status
+df</code></pre>
+      <p><strong>Pass:</strong> shell responds, <code>/sys</code> visible, <code>sd0</code> status matches card state.</p>
+    </section>
+
+    <section class="card">
+      <h2>1) New diagnostics commands</h2>
+      <table>
+        <thead><tr><th>Command</th><th>Expected</th></tr></thead>
+        <tbody>
+          <tr><td><code>i2cdetect</code></td><td>I2C scan table printed; if CardKB connected, address <code>5f</code> appears.</td></tr>
+          <tr><td><code>devls</code></td><td>Device table with statuses (<code>ready</code>, <code>mounted</code>, etc.).</td></tr>
+          <tr><td><code>devls -v</code></td><td>Same table + pin/address details.</td></tr>
+          <tr><td><code>watchdog status</code></td><td>WDT status/timeout text printed.</td></tr>
+          <tr><td><code>watchdog feed</code></td><td><code>Watchdog fed.</code> or safe task-not-subscribed message.</td></tr>
+          <tr><td><code>loglevel info</code></td><td>Global log level confirmation.</td></tr>
+          <tr><td><code>loglevel main debug</code></td><td>Per-tag log level confirmation.</td></tr>
+          <tr><td><code>sync</code></td><td>Filesystem status lines for <code>/sdcard</code>/<code>/sys</code> and clean-unmount guidance.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <h2>2) File command set smoke test</h2>
+      <pre><code>cd /sdcard
+mkdir qa
+touch qa/a.txt
+write qa/a.txt hello
+append qa/a.txt world
+cat qa/a.txt
+wc qa/a.txt
+head -n 1 qa/a.txt
+tail -n 1 qa/a.txt
+grep hello qa/a.txt
+stat qa/a.txt
+cp qa/a.txt qa/b.txt
+mv qa/b.txt qa/c.txt
+find a /sdcard/qa
+tree /sdcard/qa
+du /sdcard/qa
+hexdump qa/a.txt 0 32
+test -f qa/a.txt
+basename /sdcard/qa/a.txt
+dirname /sdcard/qa/a.txt
+rm qa/c.txt
+rm qa/a.txt
+rmdir qa</code></pre>
+      <p><strong>Pass:</strong> no unexpected errors, file contents stay correct, and final cleanup succeeds.</p>
+    </section>
+
+    <section class="card">
+      <h2>3) Script and timing test</h2>
+      <pre><code>write /sdcard/tmp/qa.scr echo QA start
+append /sdcard/tmp/qa.scr free
+append /sdcard/tmp/qa.scr devls
+append /sdcard/tmp/qa.scr echo QA end
+source /sdcard/tmp/qa.scr
+time source /sdcard/tmp/qa.scr</code></pre>
+      <p><strong>Pass:</strong> script executes in order and <code>time</code> prints <code>real X.XXX s</code>.</p>
+    </section>
+
+    <section class="card">
+      <h2>4) Navigation and path normalization test</h2>
+      <pre><code>cd /sdcard/tmp
+pwd
+cd ..
+pwd
+cd ./etc/../tmp
+pwd</code></pre>
+      <p><strong>Pass:</strong> <code>cd ..</code>, <code>.</code>, and mixed relative paths resolve correctly without leaving expected root paths.</p>
+    </section>
+
+    <section class="card">
+      <h2>5) Config and service command tests</h2>
+      <pre><code>write /sdcard/tmp/test.ini [network]
+append /sdcard/tmp/test.ini ssid=mywifi
+append /sdcard/tmp/test.ini password=secret
+config /sdcard/tmp/test.ini
+config /sdcard/tmp/test.ini network
+config /sdcard/tmp/test.ini network.ssid
+fstab
+service list
+service info klog
+vconsole tail 10
+vconsole clear
+vconsole status</code></pre>
+      <p><strong>Pass:</strong> config dump/lookup works, service registry returns active services, and vconsole commands report expected buffer state.</p>
+    </section>
+
+    <section class="card">
+      <h2>6) System and module metadata commands</h2>
+      <pre><code>uptime
+ps
+free
+lscpu
+env
+dmesg
+which demo
+lsmod
+modinfo demo</code></pre>
+      <p><strong>Pass:</strong> commands return clean output; module commands gracefully report not-found if no module is installed.</p>
+    </section>
+
+    <section class="card">
+      <h2>7) Error-path sanity checks (important)</h2>
+      <pre><code>cat /sdcard/does-not-exist.txt
+cd /sdcard/does-not-exist
+i2cget 0x00 0x00 1
+loglevel invalid
+watchdog badcmd
+rmdir /sdcard/tmp</code></pre>
+      <p><strong>Pass:</strong> each command reports a clear error message and shell remains stable.</p>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">micro_arch docs site • Testing Checklist</div>
+  </footer>
+</body>
+</html>

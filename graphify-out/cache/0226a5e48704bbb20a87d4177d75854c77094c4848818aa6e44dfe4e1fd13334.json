@@ -1,0 +1,1 @@
+{"nodes": [{"id": "managed_components_espressif_elf_loader_include_esp_dlfcn_h", "label": "esp_dlfcn.h", "file_type": "code", "source_file": "managed_components/espressif__elf_loader/include/esp_dlfcn.h", "source_location": "L1"}], "edges": [], "raw_calls": []}

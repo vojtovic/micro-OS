@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Architecture • micro_arch</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="container header-row">
+      <a class="brand" href="index.html">micro_arch docs</a>
+      <nav>
+        <a href="index.html">Home</a>
+        <a href="getting-started.html">Getting Started</a>
+        <a class="active" href="architecture.html">Architecture</a>
+        <a href="command-reference.html">Command Reference</a>
+        <a href="use-cases.html">Use Cases</a>
+        <a href="tutorials.html">Tutorials</a>
+        <a href="testing-checklist.html">Testing Checklist</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <h1>Architecture</h1>
+    <p class="lead">Current runtime structure from the implemented firmware (foundation phase).</p>
+
+    <section class="card">
+      <h2>Boot flow</h2>
+      <pre><code>app_main
+  -> klog_init()
+  -> init_boot_beep()
+  -> vconsole_init(32768)      // PSRAM virtual console ring
+  -> internal_fs_mount()       // /sys (LittleFS)
+  -> init_create_default_fstab()
+  -> bus_init()                // SPI + I2C
+  -> init_mount_fstab()        // mount from /sys/etc/fstab
+  -> fallback storage_sd_mount() if /sys unavailable
+  -> init_filesystem()         // ensure /sdcard hierarchy + default files
+  -> registry_init()           // runtime service registry
+  -> registry_add(...)         // klog, bus, internal_fs, vconsole, storage
+  -> shell_init()              // register command groups
+  -> init_run_bootscript()     // /sdcard/etc/init.conf (if SD mounted)
+  -> shell_start()</code></pre>
+    </section>
+
+    <section class="grid cols-2">
+      <article class="card">
+        <h2>Storage model</h2>
+        <ul>
+          <li><code>/sys</code>: internal LittleFS partition named <code>internal</code></li>
+          <li><code>/sdcard</code>: external FAT filesystem (SPI SD card)</li>
+        </ul>
+        <p>On first boot with SD mounted, the firmware ensures:</p>
+        <pre><code>/sdcard/bin
+/sdcard/drivers
+/sdcard/etc
+/sdcard/home
+/sdcard/tmp
+/sdcard/var/log</code></pre>
+      </article>
+
+      <article class="card">
+        <h2>Boot-time config files</h2>
+        <ul>
+          <li><code>/sys/etc/fstab</code> — filesystem mount table used at boot</li>
+          <li><code>/sdcard/etc/hardware.conf</code> — pin/config placeholders for modules</li>
+          <li><code>/sdcard/etc/hostname</code> — default hostname string</li>
+          <li><code>/sdcard/etc/init.conf</code> — shell commands executed during boot</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="grid cols-2">
+      <article class="card">
+        <h2>Bus layer</h2>
+        <ul>
+          <li>SPI3 bus initialized for SD card</li>
+          <li>I2C0 initialized at 100kHz</li>
+          <li>Helper API exposes SPI device add and bus lock/unlock for future modules</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <h2>Shell subsystem</h2>
+        <ul>
+          <li>Based on <code>esp_console</code></li>
+          <li>Prompt format: <code>[cwd] uarch&gt;</code></li>
+          <li>Tracks current working directory and command history (32 entries)</li>
+          <li>Normalizes relative paths (<code>.</code>, <code>..</code>) through shell path resolver</li>
+          <li>Registers base shell commands + file/system/diag + config + service + vconsole + fstab groups</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="card">
+      <h2>Output channels</h2>
+      <ul>
+        <li><strong>klog</strong>: captures <code>ESP_LOG*</code> output in a ring buffer (<code>dmesg</code> command).</li>
+        <li><strong>vconsole</strong>: captures shell-visible output in a PSRAM ring buffer and mirrors to UART (<code>vconsole</code> command family).</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Pinned boot-critical hardware configuration</h2>
+      <table>
+        <thead>
+          <tr><th>Function</th><th>Pins / Settings</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>SD SPI</td><td>MOSI 38, CLK 39, MISO 40, CS 46, host SPI3</td></tr>
+          <tr><td>I2C</td><td>SDA 8, SCL 9, CardKB address 0x5F</td></tr>
+          <tr><td>Buzzer</td><td>GPIO 4</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">micro_arch docs site • Architecture</div>
+  </footer>
+</body>
+</html>

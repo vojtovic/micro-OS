@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Use Cases • micro_arch</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="container header-row">
+      <a class="brand" href="index.html">micro_arch docs</a>
+      <nav>
+        <a href="index.html">Home</a>
+        <a href="getting-started.html">Getting Started</a>
+        <a href="architecture.html">Architecture</a>
+        <a href="command-reference.html">Command Reference</a>
+        <a class="active" href="use-cases.html">Use Cases</a>
+        <a href="tutorials.html">Tutorials</a>
+        <a href="testing-checklist.html">Testing Checklist</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <h1>Use Cases</h1>
+    <p class="lead">Practical workflows this current firmware supports today.</p>
+
+    <section class="grid cols-2">
+      <article class="card">
+        <h2>1) Bring-up bench diagnostics</h2>
+        <p>Validate that board buses and key peripherals are alive after wiring or board revision changes.</p>
+        <pre><code>devls -v
+i2cdetect
+lsblk
+df
+watchdog status</code></pre>
+      </article>
+
+      <article class="card">
+        <h2>2) On-device file management</h2>
+        <p>Use Linux-style commands to inspect, create, and mutate files directly on the SD card.</p>
+        <pre><code>cd /sdcard
+mkdir lab
+write lab/readme.txt hello micro_arch
+append lab/readme.txt second line
+cat lab/readme.txt
+tree /sdcard</code></pre>
+      </article>
+    </section>
+
+    <section class="grid cols-2">
+      <article class="card">
+        <h2>3) Persistent operational logging</h2>
+        <p>Capture lightweight notes on internal flash for debugging sessions that survive reboots.</p>
+        <pre><code>note started thermal run
+note fan pwm set to 30 percent
+note</code></pre>
+        <p>Notes are stored at <code>/sys/log/notes.log</code>.</p>
+      </article>
+
+      <article class="card">
+        <h2>4) Boot automation</h2>
+        <p>Execute a deterministic startup routine from <code>/sdcard/etc/init.conf</code>.</p>
+        <pre><code>write /sdcard/etc/init.conf echo boot profile A
+append /sdcard/etc/init.conf devls
+append /sdcard/etc/init.conf df</code></pre>
+        <p>Commands run automatically on boot when SD mount succeeds.</p>
+      </article>
+    </section>
+
+    <section class="card">
+      <h2>5) Hardware probing and smoke tests</h2>
+      <pre><code>gpio mode 4 out
+gpio write 4 1
+sleep 0.2
+gpio write 4 0
+beep 1200 150
+i2cget 0x5F 0x00 1</code></pre>
+    </section>
+
+    <section class="card">
+      <h2>6) Runtime service and config inspection</h2>
+      <pre><code>service list
+service info klog
+fstab
+vconsole status
+vconsole tail 20
+config /sdcard/etc/hardware.conf
+config /sdcard/etc/hardware.conf buzzer.pin</code></pre>
+      <p>Use this to verify registered services and quickly inspect INI configuration values from the shell.</p>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">micro_arch docs site • Use Cases</div>
+  </footer>
+</body>
+</html>
