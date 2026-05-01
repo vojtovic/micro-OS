@@ -40,6 +40,22 @@ pio test -e freenove_esp32_s3_wroom
 pio test -e freenove_esp32_s3_wroom -f <test_name>
 ```
 
+## Web docs (`docs-site`)
+
+This repository includes a static documentation website in `docs-site/`.
+
+```bash
+# Option 1: open directly
+xdg-open docs-site/index.html
+
+# Option 2: run a local web server
+cd docs-site
+python3 -m http.server 8080
+# then open http://localhost:8080
+```
+
+> Note: this is a docs website for development. Firmware web/Wi-Fi services are still planned in later roadmap phases.
+
 ## Project layout
 
 ```text
