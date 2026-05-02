@@ -5,6 +5,7 @@
 #include "esp_event.h"
 #include "esp_console.h"
 #include "esp_log.h"
+#include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "lwip/ip4_addr.h"
@@ -50,10 +51,21 @@ static void wifi_event_handler(void *arg, esp_event_base_t base,
 
 esp_err_t wifi_service_init(void)
 {
+    // Wi-Fi stack requires NVS for calibration and config storage.
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        err = nvs_flash_init();
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "NVS init failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
     s_wifi_eg = xEventGroupCreate();
     if (!s_wifi_eg) return ESP_ERR_NO_MEM;
 
-    esp_err_t err = esp_netif_init();
+    err = esp_netif_init();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) return err;
 
     err = esp_event_loop_create_default();
