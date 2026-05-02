@@ -95,8 +95,14 @@
           <tr><td><code>shutdown</code></td><td>Unmount filesystems then restart.</td></tr>
           <tr><td><code>lsblk</code></td><td>Show flash partitions and SD status.</td></tr>
           <tr><td><code>which &lt;cmd&gt;</code></td><td>Search in <code>/sdcard/bin</code> and <code>/sdcard/drivers</code>.</td></tr>
-          <tr><td><code>lsmod</code></td><td>List installed <code>.elf</code> files in drivers folder.</td></tr>
-          <tr><td><code>modinfo &lt;module&gt;</code></td><td>Show file-level metadata for module file.</td></tr>
+          <tr><td><code>modload &lt;path.elf&gt;</code></td><td>Load module ELF into runtime (does not start it).</td></tr>
+          <tr><td><code>modstart &lt;name&gt;</code></td><td>Start a loaded module by runtime name.</td></tr>
+          <tr><td><code>modstop &lt;name&gt;</code></td><td>Stop a running module.</td></tr>
+          <tr><td><code>modunload &lt;name&gt;</code></td><td>Unload a stopped module from runtime.</td></tr>
+          <tr><td><code>modrun &lt;path.elf&gt;</code></td><td>Load and start module in one command.</td></tr>
+          <tr><td><code>lsmod</code></td><td>List currently loaded modules with state and memory sizes.</td></tr>
+          <tr><td><code>modinfo &lt;name&gt;</code></td><td>Show runtime module metadata and exported details.</td></tr>
+          <tr><td><code>display</code></td><td>List registered display drivers and advertised capabilities.</td></tr>
           <tr><td><code>dmesg</code></td><td>Dump in-memory kernel log ring buffer.</td></tr>
           <tr><td><code>sleep &lt;seconds&gt;</code></td><td>Delay execution.</td></tr>
           <tr><td><code>time &lt;command...&gt;</code></td><td>Measure command runtime.</td></tr>

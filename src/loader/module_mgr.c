@@ -84,6 +84,10 @@ esp_err_t module_mgr_load(const char *elf_path)
     }
 
     mod->psram_before = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    if (mod->psram_before < 4096) {
+        ESP_LOGE(TAG, "Insufficient PSRAM: %zu bytes free", mod->psram_before);
+        return ESP_ERR_NO_MEM;
+    }
 
     esp_err_t err = elf_loader_load(elf_path, &mod->elf);
     if (err != ESP_OK) return err;
@@ -115,6 +119,14 @@ esp_err_t module_mgr_load(const char *elf_path)
     mod->exports = s_pending_exports;
     s_pending_exports = NULL;
     strncpy(mod->name, mod->exports->info->name, sizeof(mod->name) - 1);
+
+    if (find_name(mod->name)) {
+        ESP_LOGE(TAG, "Module '%s' already loaded", mod->name);
+        elf_loader_unload(&mod->elf);
+        mod->exports = NULL;
+        return ESP_ERR_INVALID_STATE;
+    }
+
     strncpy(mod->path, elf_path, sizeof(mod->path) - 1);
     mod->state = MODULE_STATE_LOADED;
     mod->active = true;

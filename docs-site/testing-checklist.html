@@ -122,26 +122,44 @@ vconsole status</code></pre>
     </section>
 
     <section class="card">
-      <h2>6) System and module metadata commands</h2>
+      <h2>6) System and runtime metadata commands</h2>
       <pre><code>uptime
 ps
 free
 lscpu
 env
 dmesg
-which demo
-lsmod
-modinfo demo</code></pre>
-      <p><strong>Pass:</strong> commands return clean output; module commands gracefully report not-found if no module is installed.</p>
+which display
+lsmod</code></pre>
+      <p><strong>Pass:</strong> commands return clean output; <code>which</code> resolves known commands and <code>lsmod</code> remains stable even with zero modules loaded.</p>
     </section>
 
     <section class="card">
-      <h2>7) Error-path sanity checks (important)</h2>
+      <h2>7) New module/display runtime test cases</h2>
+      <pre><code># assumes module binaries are present under /sdcard/drivers
+modrun /sdcard/drivers/oled.elf
+modrun /sdcard/drivers/eink.elf
+display
+lsmod
+modinfo oled
+modinfo eink
+modrun /sdcard/drivers/badabi.elf
+modrun /sdcard/drivers/oled.elf
+modstop oled
+modunload oled
+display
+lsmod</code></pre>
+      <p><strong>Pass:</strong> valid drivers load/start and appear in <code>display</code>; <code>badabi</code> is rejected with ABI-related load failure; duplicate <code>modrun</code> is rejected; unload removes module from both <code>lsmod</code> and <code>display</code>.</p>
+    </section>
+
+    <section class="card">
+      <h2>8) Error-path sanity checks (important)</h2>
       <pre><code>cat /sdcard/does-not-exist.txt
 cd /sdcard/does-not-exist
 i2cget 0x00 0x00 1
 loglevel invalid
 watchdog badcmd
+modrun /sdcard/drivers/does-not-exist.elf
 rmdir /sdcard/tmp</code></pre>
       <p><strong>Pass:</strong> each command reports a clear error message and shell remains stable.</p>
     </section>

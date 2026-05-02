@@ -1,0 +1,150 @@
+#include "http_client.h"
+#include "esp_http_client.h"
+#include "esp_log.h"
+#include "esp_heap_caps.h"
+#include <string.h>
+#include <stdio.h>
+
+static const char *TAG = "http_client";
+
+#define HTTP_MAX_RESPONSE  (256 * 1024)
+#define HTTP_CHUNK_SIZE    4096
+
+esp_err_t http_get(const char *url, http_response_t *response)
+{
+    if (!url || !response) return ESP_ERR_INVALID_ARG;
+    memset(response, 0, sizeof(*response));
+
+    esp_http_client_config_t config = {
+        .url = url,
+        .timeout_ms = 10000,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) return ESP_FAIL;
+
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open %s: %s", url, esp_err_to_name(err));
+        esp_http_client_cleanup(client);
+        return err;
+    }
+
+    int content_len = esp_http_client_fetch_headers(client);
+    response->status_code = esp_http_client_get_status_code(client);
+
+    size_t alloc_size = (content_len > 0) ? (size_t)content_len + 1 : HTTP_CHUNK_SIZE;
+    if (alloc_size > HTTP_MAX_RESPONSE) {
+        ESP_LOGE(TAG, "Response too large: %zu", alloc_size);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return ESP_ERR_NO_MEM;
+    }
+
+    response->body = heap_caps_malloc(alloc_size, MALLOC_CAP_SPIRAM);
+    if (!response->body) {
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return ESP_ERR_NO_MEM;
+    }
+
+    size_t total = 0;
+    while (true) {
+        if (total + HTTP_CHUNK_SIZE > HTTP_MAX_RESPONSE) break;
+
+        if (total + HTTP_CHUNK_SIZE > alloc_size) {
+            size_t new_size = alloc_size * 2;
+            if (new_size > HTTP_MAX_RESPONSE) new_size = HTTP_MAX_RESPONSE;
+            char *tmp = heap_caps_malloc(new_size, MALLOC_CAP_SPIRAM);
+            if (!tmp) break;
+            memcpy(tmp, response->body, total);
+            heap_caps_free(response->body);
+            response->body = tmp;
+            alloc_size = new_size;
+        }
+
+        int read = esp_http_client_read(client, response->body + total,
+                                        HTTP_CHUNK_SIZE);
+        if (read <= 0) break;
+        total += read;
+    }
+
+    response->body[total] = '\0';
+    response->body_len = total;
+
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+
+    ESP_LOGI(TAG, "GET %s — %d (%zu bytes)", url, response->status_code, total);
+    return ESP_OK;
+}
+
+esp_err_t http_download_file(const char *url, const char *dest_path)
+{
+    if (!url || !dest_path) return ESP_ERR_INVALID_ARG;
+
+    esp_http_client_config_t config = {
+        .url = url,
+        .timeout_ms = 30000,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) return ESP_FAIL;
+
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open %s: %s", url, esp_err_to_name(err));
+        esp_http_client_cleanup(client);
+        return err;
+    }
+
+    esp_http_client_fetch_headers(client);
+
+    FILE *f = fopen(dest_path, "wb");
+    if (!f) {
+        ESP_LOGE(TAG, "Cannot create %s", dest_path);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return ESP_FAIL;
+    }
+
+    char *buf = heap_caps_malloc(HTTP_CHUNK_SIZE, MALLOC_CAP_SPIRAM);
+    if (!buf) {
+        fclose(f);
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        return ESP_ERR_NO_MEM;
+    }
+
+    size_t total = 0;
+    while (true) {
+        int read = esp_http_client_read(client, buf, HTTP_CHUNK_SIZE);
+        if (read <= 0) break;
+        size_t written = fwrite(buf, 1, read, f);
+        if (written != (size_t)read) {
+            ESP_LOGE(TAG, "Write error at %zu bytes", total);
+            err = ESP_FAIL;
+            break;
+        }
+        total += read;
+    }
+
+    heap_caps_free(buf);
+    fclose(f);
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+
+    if (err == ESP_OK)
+        ESP_LOGI(TAG, "Downloaded %s → %s (%zu bytes)", url, dest_path, total);
+    return err;
+}
+
+void http_response_free(http_response_t *response)
+{
+    if (!response) return;
+    if (response->body) {
+        heap_caps_free(response->body);
+        response->body = NULL;
+    }
+    response->body_len = 0;
+}

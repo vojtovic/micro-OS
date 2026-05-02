@@ -4,8 +4,9 @@ STRIP      = $(TOOLCHAIN)/xtensa-esp32s3-elf-strip
 OBJDUMP    = $(TOOLCHAIN)/xtensa-esp32s3-elf-objdump
 
 KERNEL_INC = ../src/loader
+SERVICES_INC = ../src/services
 
-CFLAGS  = -c -Os -fPIC -fdata-sections -ffunction-sections -Dmain=app_main -I$(KERNEL_INC)
+CFLAGS  = -c -Os -fPIC -fdata-sections -ffunction-sections -Dmain=app_main -I$(KERNEL_INC) -I$(SERVICES_INC)
 LDFLAGS = -shared -fPIC -nostdlib -nostartfiles -e app_main \
           -Wl,--gc-sections -fvisibility=hidden
 
@@ -15,23 +16,23 @@ STRIP_FLAGS = --strip-unneeded \
               --remove-section=.xt.prop \
               --remove-section=.xtensa.info
 
-MODULES = hello
+MODULES = hello badabi oled eink
 
-.PHONY: all clean info
+.PHONY: all clean
 
 all: $(addsuffix .elf,$(MODULES))
 
-hello.elf: hello/hello.c $(KERNEL_INC)/module_types.h
-	$(CC) $(CFLAGS) $< -o hello.o
-	$(CC) $(LDFLAGS) hello.o -o $@
-	$(STRIP) $(STRIP_FLAGS) $@
-	@rm -f hello.o
-	@echo "Built $@ ($$(stat -c%s $@) bytes)"
+define build_module
+$(1).elf: $(1)/$(1).c $$(KERNEL_INC)/module_types.h
+	$$(CC) $$(CFLAGS) $$< -o $(1).o
+	$$(CC) $$(LDFLAGS) $(1).o -o $$@
+	$$(STRIP) $$(STRIP_FLAGS) $$@
+	@rm -f $(1).o
+	@cp $(1)/$(1).ini $(1).ini 2>/dev/null || true
+	@echo "Built $$@ ($$$$(stat -c%s $$@) bytes)"
+endef
 
-info: hello.elf
-	$(OBJDUMP) -h $<
-	@echo ""
-	$(OBJDUMP) -t $< | grep -E "UND|app_main|module_register|vconsole"
+$(foreach m,$(MODULES),$(eval $(call build_module,$(m))))
 
 clean:
-	rm -f *.elf *.o
+	rm -f *.elf *.o *.ini

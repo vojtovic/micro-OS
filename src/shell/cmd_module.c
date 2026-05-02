@@ -4,6 +4,7 @@
 #include "services/vconsole.h"
 #include "shell/shell.h"
 #include "esp_console.h"
+#include <string.h>
 
 static const char *state_str(module_state_t s)
 {
@@ -141,6 +142,39 @@ static int cmd_modinfo(int argc, char **argv)
     return 0;
 }
 
+static int cmd_modrun(int argc, char **argv)
+{
+    if (argc < 2) {
+        vconsole_printf("Usage: modrun <path.elf>\n");
+        return 1;
+    }
+    char path[256];
+    shell_resolve_path(argv[1], path, sizeof(path));
+
+    esp_err_t err = module_mgr_load(path);
+    if (err != ESP_OK) {
+        vconsole_printf("Load failed: %s\n", esp_err_to_name(err));
+        return 1;
+    }
+
+    const char *name = NULL;
+    for (int i = 0; i < module_mgr_count(); i++) {
+        const loaded_module_t *m = module_mgr_get(i);
+        if (m && strcmp(m->path, path) == 0) {
+            name = m->name;
+            break;
+        }
+    }
+    if (!name) return 1;
+
+    err = module_mgr_start(name);
+    if (err != ESP_OK) {
+        vconsole_printf("Start failed: %s\n", esp_err_to_name(err));
+        return 1;
+    }
+    return 0;
+}
+
 esp_err_t cmd_module_register(void)
 {
     const esp_console_cmd_t cmds[] = {
@@ -148,6 +182,7 @@ esp_err_t cmd_module_register(void)
         { .command = "modstart",  .help = "Start loaded module",   .func = cmd_modstart },
         { .command = "modstop",   .help = "Stop running module",   .func = cmd_modstop },
         { .command = "modunload", .help = "Unload stopped module", .func = cmd_modunload },
+        { .command = "modrun",    .help = "Load and start module",  .func = cmd_modrun },
         { .command = "lsmod",     .help = "List loaded modules",   .func = cmd_lsmod },
         { .command = "modinfo",   .help = "Module details",        .func = cmd_modinfo },
     };

@@ -51,7 +51,7 @@ static int cmd_date(int argc, char **argv)
 static int cmd_ps(int argc, char **argv)
 {
     uint32_t count = uxTaskGetNumberOfTasks();
-    char *buf = malloc(count * 50);
+    char *buf = heap_caps_malloc(count * 50, MALLOC_CAP_SPIRAM);
     if (!buf) {
         vconsole_printf("Out of memory\n");
         return 1;
@@ -60,7 +60,7 @@ static int cmd_ps(int argc, char **argv)
     vconsole_printf("-------------------------------------------\n");
     vTaskList(buf);
     vconsole_printf("%s", buf);
-    free(buf);
+    heap_caps_free(buf);
     return 0;
 }
 
@@ -214,63 +214,6 @@ static int cmd_which(int argc, char **argv)
     return 1;
 }
 
-static int cmd_lsmod(int argc, char **argv)
-{
-    vconsole_printf("Module      Size  Status\n");
-
-    struct stat st;
-    if (stat("/sdcard/drivers", &st) != 0) {
-        vconsole_printf("(no modules installed)\n");
-        return 0;
-    }
-
-    DIR *dir = opendir("/sdcard/drivers");
-    if (!dir) {
-        vconsole_printf("(cannot read /sdcard/drivers)\n");
-        return 0;
-    }
-
-    struct dirent *entry;
-    int count = 0;
-    while ((entry = readdir(dir)) != NULL) {
-        size_t len = strlen(entry->d_name);
-        if (len > 4 && len < 128 && strcmp(entry->d_name + len - 4, ".elf") == 0) {
-            char elf_path[160];
-            snprintf(elf_path, sizeof(elf_path), "/sdcard/drivers/%.128s", entry->d_name);
-            struct stat fs;
-            long size = 0;
-            if (stat(elf_path, &fs) == 0) size = (long)fs.st_size;
-            vconsole_printf("%-11s %5ldB  installed\n", entry->d_name, size);
-            count++;
-        }
-    }
-    closedir(dir);
-    if (count == 0) vconsole_printf("(no modules installed)\n");
-    return 0;
-}
-
-static int cmd_modinfo(int argc, char **argv)
-{
-    if (argc < 2) {
-        vconsole_printf("Usage: modinfo <module>\n");
-        return 1;
-    }
-    char path[256];
-    snprintf(path, sizeof(path), "/sdcard/drivers/%s", argv[1]);
-    struct stat st;
-    if (stat(path, &st) != 0) {
-        snprintf(path, sizeof(path), "/sdcard/drivers/%s.elf", argv[1]);
-        if (stat(path, &st) != 0) {
-            vconsole_printf("Module not found: %s\n", argv[1]);
-            return 1;
-        }
-    }
-    vconsole_printf("filename:  %s\n", path);
-    vconsole_printf("size:      %ld bytes\n", (long)st.st_size);
-    vconsole_printf("status:    installed (not loaded)\n");
-    return 0;
-}
-
 static int cmd_dmesg(int argc, char **argv)
 {
     klog_dump();
@@ -376,8 +319,6 @@ esp_err_t cmd_system_register(void)
         { .command = "shutdown", .help = "Clean unmount and halt",    .func = cmd_shutdown },
         { .command = "lsblk",   .help = "List block devices",        .func = cmd_lsblk },
         { .command = "which",   .help = "Find command in /bin",      .func = cmd_which },
-        { .command = "lsmod",   .help = "List installed modules",    .func = cmd_lsmod },
-        { .command = "modinfo", .help = "Module information",        .func = cmd_modinfo },
         { .command = "dmesg",   .help = "Kernel log ring buffer",    .func = cmd_dmesg },
         { .command = "sleep",   .help = "Delay: sleep <seconds>",  .func = cmd_sleep },
         { .command = "time",    .help = "Measure: time <command>", .func = cmd_time },

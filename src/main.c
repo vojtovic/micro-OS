@@ -8,6 +8,9 @@
 #include "services/registry.h"
 #include "loader/symtab.h"
 #include "loader/module_mgr.h"
+#include "services/display_mux.h"
+#include "services/wifi.h"
+#include "services/pkg_manager.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_task_wdt.h"
@@ -97,6 +100,25 @@ void app_main(void)
 
     // Module manager — lifecycle for loadable ELF modules
     ESP_ERROR_CHECK(module_mgr_init());
+
+    // Display multiplexer — watches vconsole and fans out to registered display drivers
+    if (vcon_err == ESP_OK) {
+        esp_err_t disp_err = display_mux_init();
+        if (disp_err != ESP_OK) {
+            ESP_LOGW(TAG, "Display mux init failed");
+        }
+    }
+
+    // Wi-Fi service — STA mode, connects on demand via shell
+    esp_err_t wifi_err = wifi_service_init();
+    if (wifi_err != ESP_OK) {
+        ESP_LOGW(TAG, "Wi-Fi init failed — networking unavailable");
+    } else {
+        registry_add("wifi", 1, (void *)wifi_get_ops(), NULL);
+    }
+
+    // Package manager — pacman-style install from remote repo
+    ESP_ERROR_CHECK(pkg_manager_init());
 
     // Shell init (register all commands)
     ESP_ERROR_CHECK(shell_init());

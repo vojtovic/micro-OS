@@ -8,6 +8,19 @@
 extern void module_register(module_exports_t *exports);
 
 extern int  vconsole_printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+typedef struct {
+    int       (*init)(void);
+    void      (*shutdown)(void);
+    void      (*render)(const char *text, size_t len);
+    void      (*clear)(void);
+    int       (*get_rows)(void);
+    int       (*get_cols)(void);
+    uint32_t  (*get_caps)(void);
+} display_driver_ops_t;
+
+extern int  display_mux_register(const char *name, const display_driver_ops_t *ops);
+extern int  display_mux_unregister(const char *name);
 extern int  vconsole_write(const char *data, size_t len);
 extern int  vconsole_putchar(char c);
 

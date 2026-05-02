@@ -48,11 +48,11 @@ The system boots into a CLI and supports installing drivers/apps as modules from
 ## Phase 2 - Module Runtime (ELF)
 **Goal:** load code at runtime without reflashing.
 
-- [ ] ELF loader integration (load from SD to RAM/PSRAM).
-- [ ] Kernel symbol export table and resolver.
-- [ ] Standard module lifecycle API (`module_init`, `module_start`, `module_stop`).
-- [ ] ABI/version checks at load time.
-- [ ] Memory boundaries and relocation safety checks.
+- [x] ELF loader integration (load from SD to RAM/PSRAM).
+- [x] Kernel symbol export table and resolver.
+- [x] Standard module lifecycle API (`module_init`, `module_start`, `module_stop`).
+- [x] ABI/version checks at load time.
+- [x] Memory boundaries and relocation safety checks.
 
 **Exit criteria**
 - A sample module loads, runs, and unloads repeatedly without reboot.
@@ -61,9 +61,9 @@ The system boots into a CLI and supports installing drivers/apps as modules from
 ## Phase 3 - Display Stack
 **Goal:** multi-screen output with predictable behavior.
 
-- [ ] OLED output driver/service for low-latency terminal feedback.
-- [ ] E-ink service with partial refresh and configurable ghosting policy.
-- [ ] Display multiplexer: mirror/route virtual console to both displays.
+- [x] OLED output driver/service for low-latency terminal feedback.
+- [x] E-ink service with partial refresh and configurable ghosting policy.
+- [x] Display multiplexer: mirror/route virtual console to both displays.
 
 **Exit criteria**
 - Shell output appears on both displays by policy.
@@ -72,11 +72,11 @@ The system boots into a CLI and supports installing drivers/apps as modules from
 ## Phase 4 - Networking and Packages
 **Goal:** Arch-like package workflow.
 
-- [ ] Wi-Fi networking service/module.
-- [ ] Package CLI:
+- [x] Wi-Fi networking service (kernel-compiled STA mode).
+- [x] Package CLI:
   - `pacman -Sy`: sync repository index.
   - `pacman -S <pkg>`: download/install module or script.
-- [ ] Package metadata format (name, version, arch, hash/signature, deps).
+- [x] Package metadata format (MPKG: magic/version/sizes/SHA-256 + repo.idx pipe-delimited index).
 - [ ] Optional Lua runtime for scripting.
 
 **Exit criteria**

@@ -6,6 +6,9 @@
 #include "services/vconsole.h"
 #include "services/registry.h"
 #include "bus/bus_manager.h"
+#include "services/display_mux.h"
+#include "services/wifi.h"
+#include "services/http_client.h"
 
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
@@ -34,9 +37,14 @@ static BaseType_t wrap_xSemaphoreGive(SemaphoreHandle_t sem)
 }
 
 static const struct esp_elfsym s_symtab[] = {
+    ESP_ELFSYM_EXPORT(display_mux_register),
+    ESP_ELFSYM_EXPORT(display_mux_unregister),
     ESP_ELFSYM_EXPORT(gpio_config),
     ESP_ELFSYM_EXPORT(gpio_get_level),
     ESP_ELFSYM_EXPORT(gpio_set_level),
+    ESP_ELFSYM_EXPORT(http_download_file),
+    ESP_ELFSYM_EXPORT(http_get),
+    ESP_ELFSYM_EXPORT(http_response_free),
     ESP_ELFSYM_EXPORT(heap_caps_free),
     ESP_ELFSYM_EXPORT(heap_caps_malloc),
     ESP_ELFSYM_EXPORT(memcpy),

@@ -16,6 +16,8 @@
 #include <stdbool.h>
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
+#include "services/http_client.h"
+#include "services/wifi.h"
 
 static const char *TAG = "cmd_files";
 
@@ -191,12 +193,12 @@ static int cmd_cp(int argc, char **argv)
     char src_path[256], dst_path[256];
     shell_resolve_path(argv[1], src_path, sizeof(src_path));
     shell_resolve_path(argv[2], dst_path, sizeof(dst_path));
-    FILE *src = fopen(src_path, "r");
+    FILE *src = fopen(src_path, "rb");
     if (!src) {
         vconsole_printf("Cannot open source: %s\n", src_path);
         return 1;
     }
-    FILE *dst = fopen(dst_path, "w");
+    FILE *dst = fopen(dst_path, "wb");
     if (!dst) {
         vconsole_printf("Cannot open destination: %s\n", dst_path);
         fclose(src);
@@ -308,7 +310,7 @@ static int cmd_tail(int argc, char **argv)
         vconsole_write(ringbuf[(start + i) % lines],
                        strlen(ringbuf[(start + i) % lines]));
     }
-    free(ringbuf);
+    heap_caps_free(ringbuf);
     return 0;
 }
 
@@ -682,6 +684,185 @@ static int cmd_test(int argc, char **argv)
     return 1;
 }
 
+static int cmd_wget(int argc, char **argv)
+{
+    if (argc < 2) {
+        vconsole_printf("Usage: wget <url> [dest_path]\n");
+        return 1;
+    }
+
+    if (!wifi_is_connected()) {
+        vconsole_printf("Wi-Fi not connected — use 'wifi connect' first\n");
+        return 1;
+    }
+
+    char dest[256];
+    if (argc >= 3) {
+        shell_resolve_path(argv[2], dest, sizeof(dest));
+    } else {
+        const char *url = argv[1];
+        const char *slash = strrchr(url, '/');
+        const char *fname = (slash && slash[1]) ? slash + 1 : "download";
+        snprintf(dest, sizeof(dest), "%s/%s", shell_get_cwd(), fname);
+    }
+
+    vconsole_printf("Downloading %s\n", argv[1]);
+    vconsole_printf("  -> %s\n", dest);
+
+    esp_err_t err = http_download_file(argv[1], dest);
+    if (err != ESP_OK) {
+        vconsole_printf("Download failed: %s\n", esp_err_to_name(err));
+        return 1;
+    }
+
+    struct stat st;
+    if (stat(dest, &st) == 0) {
+        vconsole_printf("Saved %ld bytes\n", (long)st.st_size);
+    } else {
+        vconsole_printf("Done\n");
+    }
+    return 0;
+}
+
+#define RECV_SOH   0x01
+#define RECV_EOT   0x04
+#define RECV_ACK   0x06
+#define RECV_NAK   0x15
+#define RECV_CAN   0x18
+#define RECV_BLOCK 128
+
+static int recv_getchar_timeout(int timeout_ms)
+{
+    int elapsed = 0;
+    while (elapsed < timeout_ms) {
+        int c = getchar();
+        if (c != EOF) return c;
+        vTaskDelay(pdMS_TO_TICKS(10));
+        elapsed += 10;
+    }
+    return -1;
+}
+
+static int cmd_recv(int argc, char **argv)
+{
+    if (argc < 2) {
+        vconsole_printf("Usage: recv <dest_path>\n");
+        vconsole_printf("  Receives file via XMODEM over serial.\n");
+        vconsole_printf("  Start XMODEM send from your terminal after running this.\n");
+        return 1;
+    }
+
+    char dest[256];
+    shell_resolve_path(argv[1], dest, sizeof(dest));
+
+    FILE *f = fopen(dest, "wb");
+    if (!f) {
+        vconsole_printf("Cannot create: %s\n", dest);
+        return 1;
+    }
+
+    vconsole_printf("Ready for XMODEM transfer to %s\n", dest);
+    vconsole_printf("Start sending from your terminal now...\n");
+
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    int block_num = 1;
+    long total = 0;
+    int retries = 0;
+    bool started = false;
+
+    while (true) {
+        if (!started) {
+            putchar(RECV_NAK);
+            fflush(stdout);
+        }
+
+        int ch = recv_getchar_timeout(10000);
+        if (ch < 0) {
+            retries++;
+            if (retries > 10) {
+                vconsole_printf("\nTimeout — transfer aborted\n");
+                fclose(f);
+                remove(dest);
+                return 1;
+            }
+            if (!started) {
+                putchar(RECV_NAK);
+                fflush(stdout);
+            }
+            continue;
+        }
+
+        if (ch == RECV_EOT) {
+            putchar(RECV_ACK);
+            fflush(stdout);
+            break;
+        }
+
+        if (ch == RECV_CAN) {
+            vconsole_printf("\nSender cancelled\n");
+            fclose(f);
+            remove(dest);
+            return 1;
+        }
+
+        if (ch != RECV_SOH) continue;
+
+        started = true;
+        retries = 0;
+
+        int blk = recv_getchar_timeout(1000);
+        int blk_inv = recv_getchar_timeout(1000);
+        if (blk < 0 || blk_inv < 0) {
+            putchar(RECV_NAK);
+            fflush(stdout);
+            continue;
+        }
+
+        if ((blk + blk_inv) != 0xFF) {
+            for (int i = 0; i < RECV_BLOCK; i++) recv_getchar_timeout(100);
+            recv_getchar_timeout(100);
+            putchar(RECV_NAK);
+            fflush(stdout);
+            continue;
+        }
+
+        uint8_t data[RECV_BLOCK];
+        uint8_t cksum = 0;
+        bool short_read = false;
+        for (int i = 0; i < RECV_BLOCK; i++) {
+            int b = recv_getchar_timeout(1000);
+            if (b < 0) { short_read = true; break; }
+            data[i] = (uint8_t)b;
+            cksum += data[i];
+        }
+
+        int recv_ck = recv_getchar_timeout(1000);
+        if (short_read || recv_ck < 0 || (uint8_t)recv_ck != cksum) {
+            putchar(RECV_NAK);
+            fflush(stdout);
+            continue;
+        }
+
+        if (blk == (block_num & 0xFF)) {
+            fwrite(data, 1, RECV_BLOCK, f);
+            total += RECV_BLOCK;
+            block_num++;
+        }
+
+        putchar(RECV_ACK);
+        fflush(stdout);
+    }
+
+    fclose(f);
+
+    struct stat st;
+    if (stat(dest, &st) == 0) {
+        vconsole_printf("\nReceived %ld bytes -> %s\n", (long)st.st_size, dest);
+    }
+    return 0;
+}
+
 esp_err_t cmd_files_register(void)
 {
     const esp_console_cmd_t cmds[] = {
@@ -708,6 +889,8 @@ esp_err_t cmd_files_register(void)
         { .command = "basename", .help = "Strip directory from path",                    .func = cmd_basename },
         { .command = "dirname",  .help = "Strip filename from path",                     .func = cmd_dirname },
         { .command = "test",     .help = "Test file: test <-f|-d|-e|-s> <path>",         .func = cmd_test },
+        { .command = "wget",     .help = "Download file: wget <url> [dest]",             .func = cmd_wget },
+        { .command = "recv",     .help = "Receive file via XMODEM: recv <dest_path>",    .func = cmd_recv },
     };
 
     for (int i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {

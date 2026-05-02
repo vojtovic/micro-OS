@@ -3,6 +3,9 @@
 #include "shell/cmd_system.h"
 #include "shell/cmd_diag.h"
 #include "shell/cmd_module.h"
+#include "services/display_mux.h"
+#include "services/wifi.h"
+#include "services/pkg_manager.h"
 #include "services/config.h"
 #include "services/registry.h"
 #include "services/vconsole.h"
@@ -41,10 +44,15 @@ void shell_set_cwd(const char *path)
 
 static void normalize_path(char *path)
 {
+    char tmp[CWD_SIZE];
+    strncpy(tmp, path, sizeof(tmp) - 1);
+    tmp[sizeof(tmp) - 1] = '\0';
+
     char *parts[64];
+    int lens[64];
     int depth = 0;
 
-    char *p = path;
+    char *p = tmp;
     while (*p) {
         while (*p == '/') p++;
         if (*p == '\0') break;
@@ -59,7 +67,7 @@ static void normalize_path(char *path)
             if (depth > 0) depth--;
         } else {
             parts[depth] = seg;
-            parts[depth][len] = '\0';
+            lens[depth] = len;
             if (depth < 63) depth++;
         }
     }
@@ -72,9 +80,8 @@ static void normalize_path(char *path)
     }
     for (int i = 0; i < depth; i++) {
         *out++ = '/';
-        size_t slen = strlen(parts[i]);
-        memmove(out, parts[i], slen);
-        out += slen;
+        memcpy(out, parts[i], lens[i]);
+        out += lens[i];
     }
     *out = '\0';
 }
@@ -82,7 +89,11 @@ static void normalize_path(char *path)
 void shell_resolve_path(const char *input, char *output, size_t output_size)
 {
     if (input[0] == '/') {
-        strncpy(output, input, output_size);
+        if (strncmp(input, "/sdcard", 7) == 0 || strncmp(input, "/sys", 4) == 0) {
+            strncpy(output, input, output_size);
+        } else {
+            snprintf(output, output_size, "/sdcard%s", input);
+        }
     } else {
         size_t cwd_len = strlen(s_cwd);
         if (cwd_len > 1 && s_cwd[cwd_len - 1] == '/')
@@ -308,6 +319,18 @@ esp_err_t shell_init(void)
 
     // Module management commands (modload, lsmod, etc.)
     ret = cmd_module_register();
+    if (ret != ESP_OK) return ret;
+
+    // Display driver listing
+    ret = cmd_display_register();
+    if (ret != ESP_OK) return ret;
+
+    // Wi-Fi commands
+    ret = cmd_wifi_register();
+    if (ret != ESP_OK) return ret;
+
+    // Package manager commands
+    ret = cmd_pacman_register();
     if (ret != ESP_OK) return ret;
 
     ESP_LOGI(TAG, "Shell initialized");

@@ -52,6 +52,17 @@
       </article>
 
       <article class="card">
+        <h3>Latest changes</h3>
+        <ul>
+          <li>Display multiplexer service added to mirror virtual console output to multiple display modules.</li>
+          <li>New shell command <code>display</code> lists registered display drivers and their capabilities.</li>
+          <li>New shell command <code>modrun &lt;path.elf&gt;</code> performs load + start in one step.</li>
+          <li>Module loader now blocks duplicate module names and rejects low-PSRAM load attempts.</li>
+          <li>Module SDK exports display registration APIs for loadable OLED/E-ink drivers.</li>
+        </ul>
+      </article>
+
+      <article class="card">
         <h3>What comes next</h3>
         <ul>
           <li>Service-layer stabilization</li>
