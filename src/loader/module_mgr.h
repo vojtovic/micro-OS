@@ -16,6 +16,8 @@ typedef enum {
     MODULE_STATE_ERROR,
 } module_state_t;
 
+typedef enum { MOD_SRC_LOADED = 0, MOD_SRC_STATIC = 1 } module_source_t;
+
 typedef struct {
     char              name[32];
     char              path[128];
@@ -25,6 +27,13 @@ typedef struct {
     module_state_t    state;
     size_t            psram_before;
     bool              active;
+
+    // Phase 5.2: per-module memory accounting for diagnostics.
+    module_source_t   source;       // LOADED (.elf) vs STATIC (compiled-in, 5.5)
+    size_t            iram_used;    // bytes of .iram*.text in this module
+    size_t            dram_used;    // bytes of .dram_data in this module
+    size_t            psram_used;   // bytes of PSRAM consumed at load time
+    bool              iram_degraded; // IRAM_ATTR code fell back to PSRAM
 } loaded_module_t;
 
 esp_err_t module_mgr_init(void);

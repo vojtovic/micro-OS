@@ -33,7 +33,7 @@
     <p>
       <span class="badge ok">PlatformIO + ESP-IDF</span>
       <span class="badge ok">ESP32-S3 target</span>
-      <span class="badge warn">Project status: early foundation phase</span>
+      <span class="badge warn">Project status: active bring-up and runtime hardening</span>
     </p>
 
     <section class="grid cols-2">
@@ -44,11 +44,14 @@
           <li>SD card mount at <code>/sdcard</code> and internal LittleFS mount at <code>/sys</code></li>
           <li>Boot-time mount orchestration from <code>/sys/etc/fstab</code></li>
           <li>Boot-time filesystem scaffolding and optional startup script execution</li>
-          <li>PSRAM-backed virtual console with tail/clear/status tooling</li>
-          <li>In-memory service registry with <code>service</code> CLI introspection</li>
-          <li>INI configuration parser via <code>config</code> command</li>
-          <li>Broad command surface for file operations, system info, and hardware probing</li>
-        </ul>
+           <li>PSRAM-backed virtual console with tail/clear/status tooling</li>
+           <li>In-memory service registry with <code>service</code> CLI introspection</li>
+           <li>Runtime ELF module lifecycle (<code>modload/modrun/modstop/modunload/lsmod</code>)</li>
+           <li>Wi-Fi service and shell command set (<code>wifi status/connect/disconnect/scan</code>)</li>
+           <li>Package manager workflows via <code>pkg sync/install/remove/search/list/repo</code></li>
+           <li>INI configuration parser via <code>config</code> command</li>
+           <li>Broad command surface for file operations, system info, and hardware probing</li>
+         </ul>
       </article>
 
       <article class="card">
@@ -65,9 +68,9 @@
       <article class="card">
         <h3>What comes next</h3>
         <ul>
-          <li>Service-layer stabilization</li>
-          <li>Module runtime and package workflow</li>
-          <li>Display stack and networking expansion</li>
+          <li>Service-layer stabilization and failure-path hardening</li>
+          <li>Expanded package repository workflows and operational tooling</li>
+          <li>Display and networking reliability tuning on hardware</li>
         </ul>
       </article>
     </section>

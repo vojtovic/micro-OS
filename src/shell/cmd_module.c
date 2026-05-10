@@ -4,7 +4,10 @@
 #include "services/vconsole.h"
 #include "shell/shell.h"
 #include "esp_console.h"
+#include "mbedtls/sha256.h"
 #include <string.h>
+#include <stdio.h>
+#include <sys/stat.h>
 
 static const char *state_str(module_state_t s)
 {
@@ -85,6 +88,37 @@ static int cmd_lsmod(int argc, char **argv)
     int count = module_mgr_count();
     if (count == 0) {
         vconsole_printf("No modules loaded\n");
+        return 0;
+    }
+
+    bool verbose = (argc >= 2 && strcmp(argv[1], "-v") == 0);
+
+    if (verbose) {
+        vconsole_printf("%-12s %-8s %-7s %-7s %7s %7s %7s %s\n",
+                        "NAME", "VERSION", "SOURCE", "STATE",
+                        "PSRAM", "IRAM", "DRAM", "FLAGS");
+        size_t total_psram = 0, total_iram = 0, total_dram = 0;
+        for (int i = 0; i < count; i++) {
+            const loaded_module_t *m = module_mgr_get(i);
+            if (!m) continue;
+            const char *src = (m->source == MOD_SRC_STATIC) ? "STATIC" : "LOADED";
+            vconsole_printf("%-12s %-8s %-7s %-7s %5zuKB %5zuKB %5zuKB %s\n",
+                            m->name,
+                            m->exports->info->version,
+                            src,
+                            state_str(m->state),
+                            m->psram_used / 1024,
+                            m->iram_used / 1024,
+                            m->dram_used / 1024,
+                            m->iram_degraded ? "IRAM_DEGRADED" : "OK");
+            total_psram += m->psram_used;
+            total_iram  += m->iram_used;
+            total_dram  += m->dram_used;
+        }
+        vconsole_printf("%-12s %-8s %-7s %-7s %5zuKB %5zuKB %5zuKB\n",
+                        "totals", "", "", "",
+                        total_psram / 1024, total_iram / 1024, total_dram / 1024);
+        vconsole_printf("(%d/%d slots)\n", count, MODULE_MAX_LOADED);
         return 0;
     }
 
@@ -175,6 +209,59 @@ static int cmd_modrun(int argc, char **argv)
     return 0;
 }
 
+static int cmd_verify(int argc, char **argv)
+{
+    if (argc < 2) {
+        vconsole_printf("Usage: verify <file>\n");
+        return 1;
+    }
+
+    char path[256];
+    shell_resolve_path(argv[1], path, sizeof(path));
+
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        vconsole_printf("Cannot open: %s\n", path);
+        return 1;
+    }
+
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0);
+    uint8_t buf[512];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+        mbedtls_sha256_update(&ctx, buf, n);
+    fclose(f);
+    uint8_t hash[32];
+    mbedtls_sha256_finish(&ctx, hash);
+    mbedtls_sha256_free(&ctx);
+
+    char hex[65];
+    for (int i = 0; i < 32; i++)
+        sprintf(hex + i * 2, "%02x", hash[i]);
+    hex[64] = '\0';
+
+    char sha_path[264];
+    snprintf(sha_path, sizeof(sha_path), "%s.sha256", path);
+    FILE *sf = fopen(sha_path, "r");
+    if (sf) {
+        char expected[65] = {0};
+        fgets(expected, sizeof(expected), sf);
+        fclose(sf);
+        if (strncmp(expected, hex, 64) == 0) {
+            vconsole_printf("PASS  %s\n", hex);
+        } else {
+            vconsole_printf("FAIL  computed: %s\n", hex);
+            vconsole_printf("      expected: %.64s\n", expected);
+            return 1;
+        }
+    } else {
+        vconsole_printf("%s  %s\n", hex, path);
+    }
+    return 0;
+}
+
 esp_err_t cmd_module_register(void)
 {
     const esp_console_cmd_t cmds[] = {
@@ -183,8 +270,9 @@ esp_err_t cmd_module_register(void)
         { .command = "modstop",   .help = "Stop running module",   .func = cmd_modstop },
         { .command = "modunload", .help = "Unload stopped module", .func = cmd_modunload },
         { .command = "modrun",    .help = "Load and start module",  .func = cmd_modrun },
-        { .command = "lsmod",     .help = "List loaded modules",   .func = cmd_lsmod },
+        { .command = "lsmod",     .help = "List modules (-v for memory)", .func = cmd_lsmod },
         { .command = "modinfo",   .help = "Module details",        .func = cmd_modinfo },
+        { .command = "verify",    .help = "Verify file hash: verify <file>", .func = cmd_verify },
     };
 
     for (int i = 0; i < sizeof(cmds) / sizeof(cmds[0]); i++) {

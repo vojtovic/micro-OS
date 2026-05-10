@@ -11,6 +11,7 @@
 #include "services/display_mux.h"
 #include "services/wifi.h"
 #include "services/pkg_manager.h"
+#include "services/mem_pool.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_task_wdt.h"
@@ -49,6 +50,10 @@ void app_main(void)
 
     // Hardware diagnostics
     print_psram_info();
+
+    // Module memory pool — soft IRAM budget for loadable modules.
+    // TODO: read module.iram_pool_kb from /sys/etc/loader.conf when present.
+    mem_pool_init(MEM_POOL_DEFAULT_IRAM_KB);
 
     // Virtual console — PSRAM ring buffer for display module output
     esp_err_t vcon_err = vconsole_init(32768);

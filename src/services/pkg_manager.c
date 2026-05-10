@@ -7,11 +7,13 @@
 #include "esp_console.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_task_wdt.h"
 #include "mbedtls/sha256.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <dirent.h>
+#include <errno.h>
 #include <sys/stat.h>
 
 static const char *TAG = "pkg_mgr";
@@ -27,6 +29,42 @@ static void ensure_dirs(void)
 {
     mkdir(PKG_INSTALL_DIR, 0755);
     mkdir(PKG_TMP_DIR, 0755);
+}
+
+static void pkg_cleanup_partial(void)
+{
+    // Sweep PKG_INSTALL_DIR for .tmp leftovers (failed atomic renames).
+    DIR *dir = opendir(PKG_INSTALL_DIR);
+    if (dir) {
+        struct dirent *ent;
+        while ((ent = readdir(dir)) != NULL) {
+            size_t len = strlen(ent->d_name);
+            if (len > 4 && strcmp(ent->d_name + len - 4, ".tmp") == 0) {
+                char path[280];
+                snprintf(path, sizeof(path), "%s/%.255s", PKG_INSTALL_DIR, ent->d_name);
+                remove(path);
+                ESP_LOGW(TAG, "Cleaned up partial install: %s", ent->d_name);
+            }
+        }
+        closedir(dir);
+    }
+
+    // Sweep PKG_TMP_DIR for stale .mpkg downloads (install crashed before
+    // the tmp file could be removed).
+    dir = opendir(PKG_TMP_DIR);
+    if (dir) {
+        struct dirent *ent;
+        while ((ent = readdir(dir)) != NULL) {
+            size_t len = strlen(ent->d_name);
+            if (len > 5 && strcmp(ent->d_name + len - 5, ".mpkg") == 0) {
+                char path[280];
+                snprintf(path, sizeof(path), "%s/%.255s", PKG_TMP_DIR, ent->d_name);
+                remove(path);
+                ESP_LOGW(TAG, "Cleaned up stale mpkg: %s", ent->d_name);
+            }
+        }
+        closedir(dir);
+    }
 }
 
 static esp_err_t parse_repo_index(const char *data, size_t len)
@@ -124,6 +162,7 @@ esp_err_t pkg_manager_init(void)
 
     load_cached_index();
     ensure_dirs();
+    pkg_cleanup_partial();
 
     ESP_LOGI(TAG, "Package manager ready (%d cached, repo: %s)",
              s_repo.count, s_repo.repo_url[0] ? s_repo.repo_url : "(none)");
@@ -226,25 +265,36 @@ esp_err_t pkg_install(const char *name)
     }
 
     char elf_path[128], ini_path[128];
+    char elf_tmp[128], ini_tmp[128];
     snprintf(elf_path, sizeof(elf_path), "%s/%s.elf", PKG_INSTALL_DIR, name);
     snprintf(ini_path, sizeof(ini_path), "%s/%s.ini", PKG_INSTALL_DIR, name);
+    snprintf(elf_tmp, sizeof(elf_tmp), "%s/%s.elf.tmp", PKG_INSTALL_DIR, name);
+    snprintf(ini_tmp, sizeof(ini_tmp), "%s/%s.ini.tmp", PKG_INSTALL_DIR, name);
 
-    FILE *ef = fopen(elf_path, "wb");
+    FILE *ef = fopen(elf_tmp, "wb");
     if (!ef) {
         heap_caps_free(elf_buf); fclose(f); remove(tmp_path);
         return ESP_FAIL;
     }
-    fwrite(elf_buf, 1, hdr.elf_size, ef);
+    size_t elf_written = fwrite(elf_buf, 1, hdr.elf_size, ef);
+    fflush(ef);
     fclose(ef);
     heap_caps_free(elf_buf);
+
+    if (elf_written != hdr.elf_size) {
+        ESP_LOGE(TAG, "ELF write incomplete");
+        remove(elf_tmp); fclose(f); remove(tmp_path);
+        return ESP_FAIL;
+    }
 
     if (hdr.ini_size > 0) {
         uint8_t *ini_buf = heap_caps_malloc(hdr.ini_size, MALLOC_CAP_SPIRAM);
         if (ini_buf) {
             if (fread(ini_buf, 1, hdr.ini_size, f) == hdr.ini_size) {
-                FILE *inf = fopen(ini_path, "wb");
+                FILE *inf = fopen(ini_tmp, "wb");
                 if (inf) {
                     fwrite(ini_buf, 1, hdr.ini_size, inf);
+                    fflush(inf);
                     fclose(inf);
                 }
             }
@@ -253,7 +303,24 @@ esp_err_t pkg_install(const char *name)
     }
 
     fclose(f);
-    remove(tmp_path);
+    if (remove(tmp_path) != 0) {
+        ESP_LOGW(TAG, "Could not delete staging file %s (errno=%d)", tmp_path, errno);
+    }
+
+    rename(elf_tmp, elf_path);
+    rename(ini_tmp, ini_path);
+
+    {
+        char sha_path[136];
+        snprintf(sha_path, sizeof(sha_path), "%s.sha256", elf_path);
+        FILE *sf = fopen(sha_path, "w");
+        if (sf) {
+            for (int i = 0; i < 32; i++)
+                fprintf(sf, "%02x", computed_hash[i]);
+            fprintf(sf, "\n");
+            fclose(sf);
+        }
+    }
 
     ESP_LOGI(TAG, "Installed %s v%s (%lu bytes)", name, pkg->version,
              (unsigned long)hdr.elf_size);
@@ -279,6 +346,11 @@ esp_err_t pkg_remove(const char *name)
 
     remove(elf_path);
     remove(ini_path);
+
+    char sha_path[136];
+    snprintf(sha_path, sizeof(sha_path), "%s.sha256", elf_path);
+    remove(sha_path);
+
     ESP_LOGI(TAG, "Removed %s", name);
     return ESP_OK;
 }
@@ -368,14 +440,20 @@ const pkg_repo_t *pkg_get_repo(void)
     return &s_repo;
 }
 
-static int cmd_pacman(int argc, char **argv)
+static int cmd_pkg(int argc, char **argv)
 {
     if (argc < 2) {
-        vconsole_printf("Usage: pacman <-Sy|-S name|-R name|-Ss|-Q|--repo url>\n");
+        vconsole_printf("Usage: pkg <sync|install|remove|search|list|repo> [args]\n");
+        vconsole_printf("  pkg sync            Synchronize package database\n");
+        vconsole_printf("  pkg install <name>  Install a package\n");
+        vconsole_printf("  pkg remove <name>   Remove a package\n");
+        vconsole_printf("  pkg search          List available packages\n");
+        vconsole_printf("  pkg list            List installed packages\n");
+        vconsole_printf("  pkg repo [url]      Show or set repository URL\n");
         return 1;
     }
 
-    if (strcmp(argv[1], "-Sy") == 0) {
+    if (strcmp(argv[1], "sync") == 0) {
         vconsole_printf("Synchronizing package database...\n");
         esp_err_t err = pkg_sync();
         if (err == ESP_OK)
@@ -385,9 +463,9 @@ static int cmd_pacman(int argc, char **argv)
         return (err == ESP_OK) ? 0 : 1;
     }
 
-    if (strcmp(argv[1], "-S") == 0) {
+    if (strcmp(argv[1], "install") == 0) {
         if (argc < 3) {
-            vconsole_printf("Usage: pacman -S <package>\n");
+            vconsole_printf("Usage: pkg install <package>\n");
             return 1;
         }
         vconsole_printf("Installing %s...\n", argv[2]);
@@ -399,9 +477,9 @@ static int cmd_pacman(int argc, char **argv)
         return (err == ESP_OK) ? 0 : 1;
     }
 
-    if (strcmp(argv[1], "-R") == 0) {
+    if (strcmp(argv[1], "remove") == 0) {
         if (argc < 3) {
-            vconsole_printf("Usage: pacman -R <package>\n");
+            vconsole_printf("Usage: pkg remove <package>\n");
             return 1;
         }
         esp_err_t err = pkg_remove(argv[2]);
@@ -412,15 +490,15 @@ static int cmd_pacman(int argc, char **argv)
         return (err == ESP_OK) ? 0 : 1;
     }
 
-    if (strcmp(argv[1], "-Ss") == 0) {
+    if (strcmp(argv[1], "search") == 0) {
         return (pkg_list_available() == ESP_OK) ? 0 : 1;
     }
 
-    if (strcmp(argv[1], "-Q") == 0) {
+    if (strcmp(argv[1], "list") == 0) {
         return (pkg_list_installed() == ESP_OK) ? 0 : 1;
     }
 
-    if (strcmp(argv[1], "--repo") == 0) {
+    if (strcmp(argv[1], "repo") == 0) {
         if (argc < 3) {
             if (s_repo.repo_url[0])
                 vconsole_printf("Repo: %s\n", s_repo.repo_url);
@@ -434,16 +512,16 @@ static int cmd_pacman(int argc, char **argv)
         return (err == ESP_OK) ? 0 : 1;
     }
 
-    vconsole_printf("Unknown option: %s\n", argv[1]);
+    vconsole_printf("Unknown subcommand: %s\n", argv[1]);
     return 1;
 }
 
-esp_err_t cmd_pacman_register(void)
+esp_err_t cmd_pkg_register(void)
 {
     const esp_console_cmd_t cmd = {
-        .command = "pacman",
-        .help = "Package manager: -Sy sync, -S install, -R remove, -Ss list, -Q installed",
-        .func = cmd_pacman,
+        .command = "pkg",
+        .help = "Package manager: sync, install, remove, search, list, repo",
+        .func = cmd_pkg,
     };
     return esp_console_cmd_register(&cmd);
 }

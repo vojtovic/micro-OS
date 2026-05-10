@@ -24,7 +24,7 @@
 
   <main class="container">
     <h1>Architecture</h1>
-    <p class="lead">Current runtime structure from the implemented firmware (foundation phase).</p>
+    <p class="lead">Current runtime structure from the implemented firmware.</p>
 
     <section class="card">
       <h2>Boot flow</h2>
@@ -40,6 +40,11 @@
   -> init_filesystem()         // ensure /sdcard hierarchy + default files
   -> registry_init()           // runtime service registry
   -> registry_add(...)         // klog, bus, internal_fs, vconsole, storage
+  -> symtab_init()             // exported kernel symbols for ELF modules
+  -> module_mgr_init()         // runtime module lifecycle manager
+  -> display_mux_init()        // optional: fan-out vconsole to display drivers
+  -> wifi_service_init()       // optional: STA Wi-Fi service
+  -> pkg_manager_init()        // package index/install runtime
   -> shell_init()              // register command groups
   -> init_run_bootscript()     // /sdcard/etc/init.conf (if SD mounted)
   -> shell_start()</code></pre>
@@ -89,7 +94,27 @@
           <li>Prompt format: <code>[cwd] uarch&gt;</code></li>
           <li>Tracks current working directory and command history (32 entries)</li>
           <li>Normalizes relative paths (<code>.</code>, <code>..</code>) through shell path resolver</li>
-          <li>Registers base shell commands + file/system/diag + config + service + vconsole + fstab groups</li>
+          <li>Registers base shell commands + file/system/diag + config + service + vconsole + fstab + module + display + wifi + pkg groups</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="grid cols-2">
+      <article class="card">
+        <h2>Module runtime</h2>
+        <ul>
+          <li>ELF loader + symbol table are initialized during boot.</li>
+          <li><code>module_mgr</code> enforces load/start/stop/unload lifecycle and slot limits.</li>
+          <li>When a <code>.sha256</code> sidecar exists, module load verifies file integrity before activation.</li>
+        </ul>
+      </article>
+
+      <article class="card">
+        <h2>Networking and packages</h2>
+        <ul>
+          <li>Wi-Fi STA service is initialized at boot and exposed via <code>wifi ...</code> commands.</li>
+          <li>Package manager initializes cached repo state and exposes <code>pkg ...</code> commands.</li>
+          <li>Package install writes ELF/module artifacts under <code>/sdcard/bin</code>.</li>
         </ul>
       </article>
     </section>

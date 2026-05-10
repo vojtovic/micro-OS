@@ -2,12 +2,13 @@
 
 Minimal Arch-Linux-inspired micro-OS for **ESP32-S3 (N16R8)** built with **PlatformIO + ESP-IDF**.
 
-It boots into a CLI shell, mounts internal and SD filesystems, initializes core buses/services, and is structured for loadable modules (drivers/apps) in later phases.
+It boots into a CLI shell, mounts internal and SD filesystems, initializes core buses/services, and includes runtime module loading plus Wi-Fi/package services.
 
 ## Current status
 
 - Foundation and system-service phases are in place (boot flow, shell, storage, service registry, virtual console).
-- Module runtime and package/network phases are planned in `roadmap.md`.
+- Module runtime is integrated (`symtab` + `module_mgr`) and shell-exposed (`modload/modrun/lsmod/...`).
+- Wi-Fi and package manager services are initialized at boot and exposed via `wifi` and `pkg` commands.
 
 ## Hardware target
 
@@ -54,7 +55,7 @@ python3 -m http.server 8080
 # then open http://localhost:8080
 ```
 
-> Note: this is a docs website for development. Firmware web/Wi-Fi services are still planned in later roadmap phases.
+> Note: this is a docs website for development and operator workflows. Networking/package features are available through the shell command surface.
 
 ## Project layout
 
@@ -75,7 +76,8 @@ src/
 3. Initialize buses (SD SPI + I2C).
 4. Mount filesystems and prepare SD hierarchy.
 5. Initialize service registry and register HAL/service ops.
-6. Initialize shell, optionally run boot script, then enter REPL.
+6. Initialize module runtime and optional services (`display_mux`, `wifi`, `pkg_manager`), then shell.
+7. Optionally run boot script, then enter REPL.
 
 ## Notes
 

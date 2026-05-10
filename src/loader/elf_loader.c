@@ -2,11 +2,40 @@
 #include "symtab.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "private/elf_types.h"
 #include <string.h>
 #include <stdio.h>
 #include <sys/stat.h>
 
 static const char *TAG = "elf_loader";
+
+// Scan the loaded ELF file for .iram*.text and .dram_data sections so we can
+// account for and report them. The upstream esp_elf_loader only recognizes
+// .text/.data/.rodata/.bss/.data.rel.ro and currently lands everything in
+// PSRAM (Phase 5.2b will fix that). For now we just measure and warn.
+static void scan_iram_dram_sections(const uint8_t *file_buf,
+                                    size_t *iram_size,
+                                    size_t *dram_size)
+{
+    *iram_size = 0;
+    *dram_size = 0;
+
+    const elf32_hdr_t  *eh = (const elf32_hdr_t *)file_buf;
+    const elf32_shdr_t *sh = (const elf32_shdr_t *)(file_buf + eh->shoff);
+    const char *shstrtab   = (const char *)(file_buf + sh[eh->shstrndx].offset);
+
+    for (uint32_t i = 0; i < eh->shnum; i++) {
+        if ((sh[i].flags & SHF_ALLOC) == 0) continue;
+
+        const char *name = shstrtab + sh[i].name;
+        if (strncmp(name, ".iram", 5) == 0) {
+            *iram_size += sh[i].size;
+        } else if (strncmp(name, ".dram_data", 10) == 0 ||
+                   strncmp(name, ".dram0", 6)     == 0) {
+            *dram_size += sh[i].size;
+        }
+    }
+}
 
 esp_err_t elf_loader_load(const char *path, elf_load_result_t *result)
 {
@@ -71,8 +100,22 @@ esp_err_t elf_loader_load(const char *path, elf_load_result_t *result)
                         result->elf.sec[ELF_SEC_BSS].size +
                         result->elf.sec[ELF_SEC_RODATA].size;
 
-    ESP_LOGI(TAG, "Loaded %s: text=%zuB, data=%zuB",
-             path, result->text_size, result->data_size);
+    // Scan for IRAM/DRAM sections and report. Until Phase 5.2b ships actual
+    // placement, this code lives in PSRAM with the rest of .text.
+    scan_iram_dram_sections(result->file_buf,
+                            &result->iram_text_size,
+                            &result->dram_data_size);
+    result->iram_in_psram = (result->iram_text_size > 0);
+
+    ESP_LOGI(TAG, "Loaded %s: text=%zuB, data=%zuB, iram=%zuB, dram=%zuB",
+             path, result->text_size, result->data_size,
+             result->iram_text_size, result->dram_data_size);
+
+    if (result->iram_in_psram) {
+        ESP_LOGW(TAG, "Module has %zu B of IRAM_ATTR code currently in PSRAM "
+                      "(Phase 5.2b will move it to internal SRAM)",
+                 result->iram_text_size);
+    }
     return ESP_OK;
 }
 

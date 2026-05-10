@@ -2,7 +2,10 @@
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_task_wdt.h"
 #include <string.h>
+#include <errno.h>
+#include <sys/stat.h>
 #include <stdio.h>
 
 static const char *TAG = "http_client";
@@ -102,10 +105,25 @@ esp_err_t http_download_file(const char *url, const char *dest_path)
 
     FILE *f = fopen(dest_path, "wb");
     if (!f) {
-        ESP_LOGE(TAG, "Cannot create %s", dest_path);
-        esp_http_client_close(client);
-        esp_http_client_cleanup(client);
-        return ESP_FAIL;
+        // Try to create the parent directory once and retry, in case
+        // /sdcard/tmp got removed or the umask hid it.
+        int saved_errno = errno;
+        char parent[256];
+        strncpy(parent, dest_path, sizeof(parent) - 1);
+        parent[sizeof(parent) - 1] = '\0';
+        char *slash = strrchr(parent, '/');
+        if (slash && slash != parent) {
+            *slash = '\0';
+            mkdir(parent, 0755);
+        }
+        f = fopen(dest_path, "wb");
+        if (!f) {
+            ESP_LOGE(TAG, "Cannot create %s: errno=%d (%s)",
+                     dest_path, saved_errno, strerror(saved_errno));
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            return ESP_FAIL;
+        }
     }
 
     char *buf = heap_caps_malloc(HTTP_CHUNK_SIZE, MALLOC_CAP_SPIRAM);
@@ -116,6 +134,7 @@ esp_err_t http_download_file(const char *url, const char *dest_path)
         return ESP_ERR_NO_MEM;
     }
 
+    esp_task_wdt_add(NULL);
     size_t total = 0;
     while (true) {
         int read = esp_http_client_read(client, buf, HTTP_CHUNK_SIZE);
@@ -127,7 +146,9 @@ esp_err_t http_download_file(const char *url, const char *dest_path)
             break;
         }
         total += read;
+        esp_task_wdt_reset();
     }
+    esp_task_wdt_delete(NULL);
 
     heap_caps_free(buf);
     fclose(f);

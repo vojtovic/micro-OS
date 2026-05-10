@@ -3,8 +3,10 @@
 #include "esp_log.h"
 
 #include "module_mgr.h"
+#include "kernel_abi.h"
 #include "services/vconsole.h"
 #include "services/registry.h"
+#include "services/dma_service.h"
 #include "bus/bus_manager.h"
 #include "services/display_mux.h"
 #include "services/wifi.h"
@@ -68,12 +70,38 @@ static const struct esp_elfsym s_symtab[] = {
     ESP_ELFSYM_EXPORT(xEventGroupSetBits),
     ESP_ELFSYM_EXPORT(xEventGroupWaitBits),
     ESP_ELFSYM_EXPORT(xTaskCreate),
+
+    /* Phase 5.3a: kernel graphics ABI (gfx_*, cache_*, dma_buf_*) */
+    ESP_ELFSYM_EXPORT(gfx_fb_alloc),
+    ESP_ELFSYM_EXPORT(gfx_fb_free),
+    ESP_ELFSYM_EXPORT(gfx_set_pixel),
+    ESP_ELFSYM_EXPORT(gfx_get_pixel),
+    ESP_ELFSYM_EXPORT(gfx_fill_rect),
+    ESP_ELFSYM_EXPORT(gfx_copy_rect),
+    ESP_ELFSYM_EXPORT(gfx_blit_masked),
+    ESP_ELFSYM_EXPORT(cache_flush_range),
+    ESP_ELFSYM_EXPORT(cache_invalidate_range),
+    ESP_ELFSYM_EXPORT(dma_buf_alloc),
+    ESP_ELFSYM_EXPORT(dma_buf_sync_for_device),
+    ESP_ELFSYM_EXPORT(dma_buf_sync_for_cpu),
+    ESP_ELFSYM_EXPORT(dma_buf_free),
+
     ESP_ELFSYM_END,
 };
 
 int symtab_count(void)
 {
     return (sizeof(s_symtab) / sizeof(s_symtab[0])) - 1;
+}
+
+bool symtab_has_prefix(const char *prefix)
+{
+    if (!prefix || !*prefix) return false;
+    size_t plen = strlen(prefix);
+    for (int i = 0; s_symtab[i].name != NULL; i++) {
+        if (strncmp(s_symtab[i].name, prefix, plen) == 0) return true;
+    }
+    return false;
 }
 
 esp_err_t symtab_init(void)

@@ -61,11 +61,13 @@ pio device monitor -b 115200</code></pre>
         <li>Default <code>/sys/etc/fstab</code> is created if missing.</li>
         <li>SPI and I2C buses initialize.</li>
         <li>Filesystems are mounted from <code>fstab</code> entries.</li>
-        <li>Filesystem skeleton is ensured under <code>/sdcard</code>.</li>
-        <li>Service registry is initialized and core services are registered.</li>
-        <li>Shell commands are registered and prompt starts.</li>
-      </ol>
-    </section>
+         <li>Filesystem skeleton is ensured under <code>/sdcard</code>.</li>
+         <li>Service registry is initialized and core services are registered.</li>
+         <li>Module runtime (<code>symtab</code> + <code>module_mgr</code>) initializes.</li>
+         <li>Optional services initialize: display mux, Wi-Fi, package manager.</li>
+         <li>Shell commands are registered and prompt starts.</li>
+       </ol>
+     </section>
 
     <section class="card">
       <h2>First commands to run</h2>
@@ -75,6 +77,8 @@ devls -v
 fstab
 vconsole status
 service list
+wifi status
+pkg list
 lsblk
 df
 pwd
@@ -108,7 +112,11 @@ klog               1  running
 bus                1  running
 internal_fs        1  running
 vconsole           1  running
-storage            1  running</code></pre>
+storage            1  running
+wifi               1  running
+
+[/sdcard] uarch&gt; wifi status
+State: disconnected</code></pre>
     </section>
 
     <section class="card">

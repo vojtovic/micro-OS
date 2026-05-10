@@ -6,6 +6,7 @@
 #include "services/display_mux.h"
 #include "services/wifi.h"
 #include "services/pkg_manager.h"
+#include "services/mem_pool.h"
 #include "services/config.h"
 #include "services/registry.h"
 #include "services/vconsole.h"
@@ -126,18 +127,39 @@ static int cmd_reboot(int argc, char **argv)
 
 static int cmd_mem(int argc, char **argv)
 {
-    vconsole_printf("Internal RAM:\n");
-    vconsole_printf("  free:  %lu bytes\n", (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
-    vconsole_printf("  total: %lu bytes\n", (unsigned long)heap_caps_get_total_size(MALLOC_CAP_INTERNAL));
-
-    size_t psram_free  = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    size_t iram_total = heap_caps_get_total_size(
+        MALLOC_CAP_INTERNAL | MALLOC_CAP_EXEC | MALLOC_CAP_32BIT);
+    size_t iram_free  = heap_caps_get_free_size(
+        MALLOC_CAP_INTERNAL | MALLOC_CAP_EXEC | MALLOC_CAP_32BIT);
+    size_t dram_total = heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t dram_free  = heap_caps_get_free_size (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t dma_total  = heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
+    size_t dma_free   = heap_caps_get_free_size (MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
     size_t psram_total = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+    size_t psram_free  = heap_caps_get_free_size (MALLOC_CAP_SPIRAM);
+
+    size_t pool_budget = mem_pool_iram_budget();
+    size_t pool_used   = mem_pool_iram_used();
+    size_t pool_dram   = mem_pool_dram_used();
+
+    vconsole_printf("Region              Total       Free       Used\n");
+    vconsole_printf("Internal DRAM    %7.1f KB %7.1f KB %7.1f KB\n",
+                    dram_total / 1024.0, dram_free / 1024.0,
+                    (dram_total - dram_free) / 1024.0);
+    vconsole_printf("  └ DMA-capable  %7.1f KB %7.1f KB %7.1f KB\n",
+                    dma_total / 1024.0, dma_free / 1024.0,
+                    (dma_total - dma_free) / 1024.0);
+    vconsole_printf("Internal IRAM    %7.1f KB %7.1f KB %7.1f KB\n",
+                    iram_total / 1024.0, iram_free / 1024.0,
+                    (iram_total - iram_free) / 1024.0);
+    vconsole_printf("  └ module pool  %7.1f KB budget, %7.1f KB used\n",
+                    pool_budget / 1024.0, pool_used / 1024.0);
+    vconsole_printf("Module DRAM use  %7.1f KB\n", pool_dram / 1024.0);
+
     if (psram_total > 0) {
-        vconsole_printf("PSRAM:\n");
-        vconsole_printf("  free:  %lu bytes (%.1f KB)\n",
-               (unsigned long)psram_free, psram_free / 1024.0);
-        vconsole_printf("  total: %lu bytes (%.1f MB)\n",
-               (unsigned long)psram_total, psram_total / (1024.0 * 1024.0));
+        vconsole_printf("PSRAM            %7.1f KB %7.1f KB %7.1f KB\n",
+                        psram_total / 1024.0, psram_free / 1024.0,
+                        (psram_total - psram_free) / 1024.0);
     } else {
         vconsole_printf("PSRAM: not available\n");
     }
@@ -330,7 +352,7 @@ esp_err_t shell_init(void)
     if (ret != ESP_OK) return ret;
 
     // Package manager commands
-    ret = cmd_pacman_register();
+    ret = cmd_pkg_register();
     if (ret != ESP_OK) return ret;
 
     ESP_LOGI(TAG, "Shell initialized");

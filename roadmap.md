@@ -82,11 +82,28 @@ The system boots into a CLI and supports installing drivers/apps as modules from
 **Exit criteria**
 - Device can fetch repository metadata and install at least one package end-to-end.
 
+## Phase 5 - High-Performance Module Runtime
+**Goal:** Make loaded ELF modules run at near-native speed for graphics, audio, and DMA-heavy workloads.
+See [docs/2026-05-10-high-perf-modules-plan.md](docs/2026-05-10-high-perf-modules-plan.md) for the detailed design.
+
+- [x] **5.1 Memory plumbing** - module IRAM pool (soft budget), cache config tuning, `dma_buf_alloc` helper, extended `mem` diagnostics.
+- [~] **5.2 ELF loader IRAM placement** - PARTIAL (5.2a done): scan `.iram*`/`.dram_data` sections in loaded ELFs, account per-module, `lsmod -v` shows IRAM/DRAM/PSRAM bytes + IRAM_DEGRADED flag, warn on load that IRAM_ATTR code is in PSRAM. Real placement (5.2b) requires forking esp_elf_load_section + Xtensa relocation patching (deferred).
+- [~] **5.3 Kernel ABI: graphics + DMA** - PARTIAL (5.3a done): 13 new exports (gfx_fb_alloc/free, gfx_set/get_pixel, gfx_fill/copy_rect, gfx_blit_masked, cache_flush/invalidate_range, dma_buf_alloc/sync/free). Deferred to 5.3b: gfx_draw_text + font system, display_blit_async (DMA SPI integration), generic dma_submit/_sync, port oled/eink to new ABI.
+- [ ] **5.4 Kernel ABI: audio** - 8 new exports (`audio_*`); I2S DMA + ESP-DSP wrappers; sample tone-gen module.
+- [ ] **5.5 Static-link escape hatch** - `MODULES_STATIC` build flag; constructor-section auto-registration; same source compiles loaded or static.
+- [~] **5.6 Manifest extensions** - PARTIAL: `[memory] iram_pages/dram_pages`, `[requires] kernel_deps`, `[module] static_link` parsed in `manifest.c`; `kernel_deps` prefixes validated against symtab via new `symtab_has_prefix()`. Deferred: `pkg install` IRAM-warning that reads manifest before downloading.
+
+**Exit criteria**
+- 60+ fps on 128x64 OLED bouncing-ball example, CPU < 5%.
+- 44.1 kHz stereo audio playback sustained 5+ minutes without underrun.
+- `lsmod -v` reports per-module IRAM/DRAM/PSRAM bytes accurately.
+- `pio run -e static-display` produces a single firmware where the OLED driver is built-in (zero load cost).
+
 ## Security and Reliability Requirements
-- [ ] Verify package/module integrity (hash; signature preferred).
-- [ ] Fail-safe module loading (no partial install left active after failure).
-- [ ] Watchdog-safe long operations (download, parse, load).
-- [ ] Crash policy: isolate module faults where possible, keep shell recoverable.
+- [x] Verify package/module integrity (hash; signature preferred).
+- [x] Fail-safe module loading (no partial install left active after failure).
+- [x] Watchdog-safe long operations (download, parse, load).
+- [x] Crash policy: isolate module faults where possible, keep shell recoverable.
 
 ## Module Contract (for Driver/App Authors)
 Every loadable module should define:

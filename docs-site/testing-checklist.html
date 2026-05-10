@@ -153,7 +153,21 @@ lsmod</code></pre>
     </section>
 
     <section class="card">
-      <h2>8) Error-path sanity checks (important)</h2>
+      <h2>8) Wi-Fi and package manager smoke tests</h2>
+      <pre><code>wifi status
+wifi scan
+wifi connect &lt;ssid&gt; &lt;password&gt;
+wifi status
+pkg repo https://example.invalid/repo
+pkg sync
+pkg search
+pkg list
+wifi disconnect</code></pre>
+      <p><strong>Pass:</strong> <code>wifi</code> command reports state transitions correctly; package commands execute with clear success/failure paths (sync failure is acceptable with invalid/non-reachable repo).</p>
+    </section>
+
+    <section class="card">
+      <h2>9) Error-path sanity checks (important)</h2>
       <pre><code>cat /sdcard/does-not-exist.txt
 cd /sdcard/does-not-exist
 i2cget 0x00 0x00 1

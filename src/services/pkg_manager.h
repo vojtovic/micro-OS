@@ -45,6 +45,6 @@ esp_err_t pkg_list_installed(void);
 esp_err_t pkg_set_repo(const char *url);
 const pkg_repo_t *pkg_get_repo(void);
 
-esp_err_t cmd_pacman_register(void);
+esp_err_t cmd_pkg_register(void);
 
 #endif

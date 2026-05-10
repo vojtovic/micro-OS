@@ -1,0 +1,5 @@
+# micro_arch package repository
+badabi|0.0.1|1614|02522656458c0730c2b5742baa6c256805cb59041c941095a4aac9eaa2286d9c|badabi.mpkg|ABI rejection test — should fail to load
+eink|1.0.0|4981|ea7b2dea7f5264f89d5762fef2f238d361482890ae2c0f4012c7173e8af2f847|eink.mpkg|Waveshare e-paper display driver with partial refresh
+hello|1.0.0|1946|ec1effe4117b96331c54a4f8f9535c7b4ff5550b1fa16f9b94afb7fc534d107e|hello.mpkg|Sample loadable module — proves load/start/stop/unload cycle
+oled|1.0.0|4099|7d9c31433ef1cb6f0587a32ebb5a6ed6d47fa261e0a5101e084ab32cb93a1277|oled.mpkg|SH1106 OLED display driver over SPI

@@ -109,7 +109,13 @@ esp_err_t display_mux_register(const char *name, const display_driver_ops_t *ops
         return ESP_ERR_NO_MEM;
     }
 
-    strncpy(slot->name, name, DISPLAY_NAME_LEN - 1);
+    // Manual byte copy — ROM strncpy does word-aligned reads via the
+    // instruction bus, which fails (LoadStoreError) when `name` is a
+    // module-side .rodata string aliased into the IROM 0x42xxxxxx range.
+    size_t i;
+    for (i = 0; i < DISPLAY_NAME_LEN - 1 && name[i]; i++)
+        slot->name[i] = name[i];
+    slot->name[i] = '\0';
     slot->ops = ops;
     slot->active = true;
 

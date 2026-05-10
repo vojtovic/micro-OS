@@ -18,6 +18,7 @@
 #include "esp_heap_caps.h"
 #include "services/http_client.h"
 #include "services/wifi.h"
+#include "esp_task_wdt.h"
 
 static const char *TAG = "cmd_files";
 
@@ -764,6 +765,7 @@ static int cmd_recv(int argc, char **argv)
     vconsole_printf("Ready for XMODEM transfer to %s\n", dest);
     vconsole_printf("Start sending from your terminal now...\n");
 
+    esp_task_wdt_add(NULL);
     vTaskDelay(pdMS_TO_TICKS(500));
 
     int block_num = 1;
@@ -848,12 +850,14 @@ static int cmd_recv(int argc, char **argv)
             fwrite(data, 1, RECV_BLOCK, f);
             total += RECV_BLOCK;
             block_num++;
+            esp_task_wdt_reset();
         }
 
         putchar(RECV_ACK);
         fflush(stdout);
     }
 
+    esp_task_wdt_delete(NULL);
     fclose(f);
 
     struct stat st;

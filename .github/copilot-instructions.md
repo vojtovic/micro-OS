@@ -15,7 +15,7 @@ pio run
 # Run all tests (PlatformIO test runner)
 pio test -e freenove_esp32_s3_wroom
 
-# Run a single test by name
+# Run a single test by name/filter
 pio test -e freenove_esp32_s3_wroom -f <test_name>
 
 # Flash and serial monitor (common dev loop)
@@ -23,6 +23,7 @@ pio run -t upload -t monitor
 ```
 
 There is currently **no dedicated lint target** configured in this repository.
+The `test/` directory currently has only the default PlatformIO placeholder, so add tests there before expecting `pio test` to run concrete suites.
 
 ## High-level architecture
 
@@ -33,17 +34,20 @@ There is currently **no dedicated lint target** configured in this repository.
 3. Initialize buses (`bus_init`): SD SPI (SPI3) + I2C.
 4. Mount filesystems from fstab (`init_mount_fstab`) and prepare SD hierarchy (`init_filesystem`).
 5. Initialize service registry (`registry_init`) and register HAL-style vtables (`bus`, `storage`, `internal_fs`, `vconsole`, `klog`).
-6. Register shell commands (`shell_init`), optionally execute `/sdcard/etc/init.conf`, then enter REPL (`shell_start`).
+6. Initialize module runtime (`symtab_init`, `module_mgr_init`), then optional services (`display_mux`, `wifi`, `pkg_manager`) and shell (`shell_init`).
+7. Optionally execute `/sdcard/etc/init.conf`, then enter REPL (`shell_start`).
 
 Core runtime structure:
 
 - **Shell layer**: `src/shell/*.c` registers Linux-style CLI commands via `esp_console`.
 - **HAL/service layer**: `src/hal/*.c` + `src/services/registry.c` expose stable ops tables for built-ins and future modules.
 - **Storage model**: `/sys` (internal LittleFS for system config) + `/sdcard` (user/module storage).
+- **Boot config contracts**: `/sys/etc/fstab` controls mounts (`init_mount_fstab`), `/sdcard/etc/init.conf` is executed as boot script (`init_run_bootscript`).
+- **Module runtime**: `src/loader/*` loads ELF modules, resolves kernel symbols via `symtab`, and enforces module lifecycle through `module_mgr`.
 - **Logging/output split**:
   - `ESP_LOG*` output is captured by **klog** ring buffer (`dmesg` path).
   - User-facing command output should go through **vconsole** (display-facing ring + UART tee).
-- **Roadmap discipline** (`roadmap.md`): keep kernel lean; display/network/app logic is intended as loadable modules in later phases.
+- **Package/network path**: Wi-Fi service and package manager are kernel-initialized and exposed through shell commands in `src/services/wifi.c` and `src/services/pkg_manager.c`.
 
 ## Key conventions in this codebase
 
@@ -52,4 +56,6 @@ Core runtime structure:
 - **Resolve filesystem arguments through `shell_resolve_path`** so commands consistently honor CWD and normalized absolute paths.
 - **Prefer service/HAL boundaries over direct cross-module calls**: add capabilities as ops tables registered in `registry`, not ad-hoc globals.
 - **Treat `/sys/etc/fstab` and `/sdcard/etc/init.conf` as boot contracts**: filesystem mounts and startup behavior should remain deterministic and scriptable through these files.
-- **Stay aligned with phase gates in `roadmap.md`**: avoid introducing later-phase module runtime/network features into early foundation/service work.
+- **Module integrity checks are sidecar-based**: when `<module>.sha256` exists, `module_mgr_load` verifies SHA-256 and rejects mismatches.
+- **Module lifecycle is strict**: modules must be stopped before unload (`modstop` → `modunload`), and failed starts are auto-unloaded.
+- **Prefer PSRAM for larger runtime buffers** (virtual console ring, module payloads), matching patterns in `vconsole` and `module_mgr`.

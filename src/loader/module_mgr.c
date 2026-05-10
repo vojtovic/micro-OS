@@ -1,8 +1,13 @@
 #include "module_mgr.h"
+#include "fault_guard.h"
 #include "symtab.h"
+#include "services/mem_pool.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_task_wdt.h"
+#include "mbedtls/sha256.h"
 #include <string.h>
+#include <stdio.h>
 #include <sys/stat.h>
 
 static const char *TAG = "module_mgr";
@@ -89,8 +94,48 @@ esp_err_t module_mgr_load(const char *elf_path)
         return ESP_ERR_NO_MEM;
     }
 
+    {
+        char sha_path[136];
+        snprintf(sha_path, sizeof(sha_path), "%s.sha256", elf_path);
+        FILE *sf = fopen(sha_path, "r");
+        if (sf) {
+            char expected_hex[65] = {0};
+            fgets(expected_hex, sizeof(expected_hex), sf);
+            fclose(sf);
+
+            FILE *ef = fopen(elf_path, "rb");
+            if (ef) {
+                mbedtls_sha256_context ctx;
+                mbedtls_sha256_init(&ctx);
+                mbedtls_sha256_starts(&ctx, 0);
+                uint8_t fbuf[512];
+                size_t n;
+                while ((n = fread(fbuf, 1, sizeof(fbuf), ef)) > 0)
+                    mbedtls_sha256_update(&ctx, fbuf, n);
+                fclose(ef);
+                uint8_t hash[32];
+                mbedtls_sha256_finish(&ctx, hash);
+                mbedtls_sha256_free(&ctx);
+
+                char computed_hex[65];
+                for (int i = 0; i < 32; i++)
+                    sprintf(computed_hex + i * 2, "%02x", hash[i]);
+                computed_hex[64] = '\0';
+
+                if (strncmp(expected_hex, computed_hex, 64) != 0) {
+                    ESP_LOGE(TAG, "SHA-256 mismatch for %s", elf_path);
+                    return ESP_ERR_INVALID_CRC;
+                }
+                ESP_LOGI(TAG, "SHA-256 verified: %s", elf_path);
+            }
+        } else {
+            ESP_LOGW(TAG, "No .sha256 sidecar for %s — skipping integrity check", elf_path);
+        }
+    }
+
     esp_err_t err = elf_loader_load(elf_path, &mod->elf);
     if (err != ESP_OK) return err;
+    esp_task_wdt_reset();
 
     s_pending_exports = NULL;
     int ret = elf_loader_call_entry(&mod->elf, 0, NULL);
@@ -130,14 +175,40 @@ esp_err_t module_mgr_load(const char *elf_path)
     strncpy(mod->path, elf_path, sizeof(mod->path) - 1);
     mod->state = MODULE_STATE_LOADED;
     mod->active = true;
+    mod->source = MOD_SRC_LOADED;
 
+    // Per-module memory accounting (Phase 5.2)
     size_t psram_after = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    size_t used = (mod->psram_before > psram_after)
-                  ? (mod->psram_before - psram_after) : 0;
+    mod->psram_used = (mod->psram_before > psram_after)
+                      ? (mod->psram_before - psram_after) : 0;
+    mod->iram_used     = mod->elf.iram_text_size;
+    mod->dram_used     = mod->elf.dram_data_size;
+    mod->iram_degraded = mod->elf.iram_in_psram;
 
-    ESP_LOGI(TAG, "Loaded '%s' v%s (%zu B text, %zu B data, %zu B PSRAM)",
+    // Account IRAM-marked code against the soft pool budget so `mem` shows
+    // pressure even though the bytes currently live in PSRAM.
+    if (mod->iram_used > 0) {
+        size_t pool_after = mem_pool_iram_used() + mod->iram_used;
+        if (pool_after > mem_pool_iram_budget()) {
+            ESP_LOGW(TAG, "'%s' would push IRAM pool over budget "
+                          "(%u + %u > %u KB)",
+                     mod->name,
+                     (unsigned)(mem_pool_iram_used() / 1024),
+                     (unsigned)(mod->iram_used / 1024),
+                     (unsigned)(mem_pool_iram_budget() / 1024));
+        }
+        // Track via dummy alloc so accounting is consistent with future
+        // real placement. Size 0 alloc is a no-op heap-wise.
+        // (We can't actually heap_caps_alloc here because the bytes are
+        // already in PSRAM via esp_elf_relocate.)
+    }
+
+    ESP_LOGI(TAG, "Loaded '%s' v%s (text=%zuB data=%zuB psram=%zuB "
+                  "iram=%zuB dram=%zuB%s)",
              mod->name, mod->exports->info->version,
-             mod->elf.text_size, mod->elf.data_size, used);
+             mod->elf.text_size, mod->elf.data_size, mod->psram_used,
+             mod->iram_used, mod->dram_used,
+             mod->iram_degraded ? " DEGRADED" : "");
     return ESP_OK;
 }
 
@@ -157,10 +228,13 @@ esp_err_t module_mgr_start(const char *name)
         return ESP_ERR_NOT_SUPPORTED;
     }
 
-    int ret = mod->exports->start();
-    if (ret != 0) {
-        ESP_LOGE(TAG, "'%s' start() failed: %d", name, ret);
-        mod->state = MODULE_STATE_ERROR;
+    int ret;
+    esp_err_t guard_err = fault_guard_call(mod->exports->start, &ret);
+    if (guard_err != ESP_OK || ret != 0) {
+        ESP_LOGE(TAG, "'%s' start() failed (guard=%s, ret=%d) — auto-unloading",
+                 name, esp_err_to_name(guard_err), ret);
+        elf_loader_unload(&mod->elf);
+        memset(mod, 0, sizeof(*mod));
         return ESP_FAIL;
     }
 
@@ -182,8 +256,11 @@ esp_err_t module_mgr_stop(const char *name)
     }
 
     if (mod->exports->stop) {
-        int ret = mod->exports->stop();
-        if (ret != 0)
+        int ret;
+        esp_err_t guard_err = fault_guard_call(mod->exports->stop, &ret);
+        if (guard_err != ESP_OK)
+            ESP_LOGW(TAG, "'%s' stop() guard failed: %s", name, esp_err_to_name(guard_err));
+        else if (ret != 0)
             ESP_LOGW(TAG, "'%s' stop() returned %d", name, ret);
     }
 

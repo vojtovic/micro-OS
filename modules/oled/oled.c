@@ -33,19 +33,29 @@ static uint8_t *s_framebuf;
 
 static void oled_gpio_init(void)
 {
-    uint64_t pin_mask = (1ULL << PIN_CS) | (1ULL << PIN_DC) | (1ULL << PIN_RST);
-    uint32_t cfg[5];
+    // Include CLK and MOSI in the output config — bit-bang SPI needs them
+    // as outputs. gpio_config_t in ESP-IDF v5.x is 24 bytes (uint64 pin_mask
+    // + 4 enums); use 8 uint32_t = 32 bytes to be safe across versions.
+    uint64_t pin_mask = (1ULL << PIN_CS)  | (1ULL << PIN_DC) |
+                        (1ULL << PIN_RST) | (1ULL << PIN_CLK) |
+                        (1ULL << PIN_MOSI);
+    uint32_t cfg[8];
     memset(cfg, 0, sizeof(cfg));
-    cfg[0] = pin_mask & 0xFFFFFFFF;
-    cfg[1] = pin_mask >> 32;
-    cfg[2] = 2;
-    cfg[3] = 0;
-    cfg[4] = 0;
+    cfg[0] = pin_mask & 0xFFFFFFFF;       // pin_bit_mask low 32
+    cfg[1] = pin_mask >> 32;               // pin_bit_mask high 32
+    cfg[2] = 2;                            // mode = GPIO_MODE_OUTPUT
+    cfg[3] = 0;                            // pull_up_en = disable
+    cfg[4] = 0;                            // pull_down_en = disable
+    cfg[5] = 0;                            // intr_type = GPIO_INTR_DISABLE
+    cfg[6] = 0;
+    cfg[7] = 0;
 
     gpio_config(cfg);
-    gpio_set_level(PIN_CS, 1);
-    gpio_set_level(PIN_DC, 0);
+    gpio_set_level(PIN_CS,  1);
+    gpio_set_level(PIN_DC,  0);
     gpio_set_level(PIN_RST, 1);
+    gpio_set_level(PIN_CLK,  0);
+    gpio_set_level(PIN_MOSI, 0);
 }
 
 static void oled_spi_write_byte(uint8_t data)
