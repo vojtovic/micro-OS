@@ -98,6 +98,9 @@ esp_err_t display_mux_register(const char *name, const display_driver_ops_t *ops
 {
     if (!name || !ops) return ESP_ERR_INVALID_ARG;
 
+    // Module .rodata pointers are data-bus addressable — the historic
+    // 0x42xxxxxx LoadStoreError was a loader mapping bug, fixed by
+    // PATCH-001 in components/elf_loader (see PATCHES.md).
     if (find_name(name)) {
         ESP_LOGW(TAG, "Display '%s' already registered", name);
         return ESP_ERR_INVALID_STATE;
@@ -109,18 +112,13 @@ esp_err_t display_mux_register(const char *name, const display_driver_ops_t *ops
         return ESP_ERR_NO_MEM;
     }
 
-    // Manual byte copy — ROM strncpy does word-aligned reads via the
-    // instruction bus, which fails (LoadStoreError) when `name` is a
-    // module-side .rodata string aliased into the IROM 0x42xxxxxx range.
-    size_t i;
-    for (i = 0; i < DISPLAY_NAME_LEN - 1 && name[i]; i++)
-        slot->name[i] = name[i];
-    slot->name[i] = '\0';
+    strncpy(slot->name, name, DISPLAY_NAME_LEN - 1);
+    slot->name[DISPLAY_NAME_LEN - 1] = '\0';
     slot->ops = ops;
     slot->active = true;
 
     ESP_LOGI(TAG, "Registered display '%s' (%dx%d)",
-             name,
+             slot->name,
              ops->get_cols ? ops->get_cols() : 0,
              ops->get_rows ? ops->get_rows() : 0);
     return ESP_OK;
@@ -128,10 +126,12 @@ esp_err_t display_mux_register(const char *name, const display_driver_ops_t *ops
 
 esp_err_t display_mux_unregister(const char *name)
 {
+    if (!name) return ESP_ERR_INVALID_ARG;
+
     display_slot_t *slot = find_name(name);
     if (!slot) return ESP_ERR_NOT_FOUND;
 
-    ESP_LOGI(TAG, "Unregistered display '%s'", name);
+    ESP_LOGI(TAG, "Unregistered display '%s'", slot->name);
     memset(slot, 0, sizeof(*slot));
     return ESP_OK;
 }

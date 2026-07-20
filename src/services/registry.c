@@ -31,13 +31,17 @@ esp_err_t registry_add(const char *name, uint16_t version, void *vtable, void *c
     }
 
     service_entry_t *e = &s_services[s_count++];
+    // Module .rodata pointers are data-bus addressable — the historic
+    // 0x42xxxxxx LoadStoreError was a loader mapping bug, fixed by
+    // PATCH-001 in components/elf_loader (see PATCHES.md).
     strncpy(e->name, name, SERVICE_NAME_LEN - 1);
+    e->name[SERVICE_NAME_LEN - 1] = '\0';
     e->version = version;
     e->state = SERVICE_RUNNING;
     e->vtable = vtable;
     e->ctx = ctx;
 
-    ESP_LOGI(TAG, "Registered: %s v%d", name, version);
+    ESP_LOGI(TAG, "Registered: %s v%d", e->name, version);
     return ESP_OK;
 }
 

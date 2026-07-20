@@ -40,3 +40,13 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_FATFS_LFN_HEAP=y
 CONFIG_FATFS_MAX_LFN=255
 CONFIG_FATFS_API_ENCODING_UTF_8=y
+
+# ELF loader — modules load to PSRAM (auto-selects CACHE_OFFSET on S3).
+# The historic LoadStoreError on module .rodata strings was NOT a
+# PSRAM-vs-SRAM issue: the upstream loader stored an over-aligned .text
+# size whose phantom 1-3 byte range swallowed the first .rodata object and
+# remapped its pointer into the ibus-only 0x42xxxxxx alias. Fixed at the
+# root in our vendored fork (components/elf_loader, PATCH-001); see
+# docs/2026-07-20-elf-loader-psram-rodata-fix.md. Fallback if hardware
+# testing ever regresses: set CONFIG_ELF_LOADER_LOAD_PSRAM=n.
+CONFIG_ELF_LOADER_LOAD_PSRAM=y

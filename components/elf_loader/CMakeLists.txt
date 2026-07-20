@@ -39,7 +39,12 @@ idf_component_register(SRCS ${srcs}
                        PRIV_REQUIRES ${priv_req}
                        LDFRAGMENTS ${ldfragments})
 
-include(package_manager)
+# micro_arch PATCH-000: vendored fork — the cmake_utilities package_manager
+# dependency (cu_pkg_define_version) is replaced by explicit version
+# definitions matching the upstream release this fork is based on.
 if(CONFIG_ELF_LOADER)
-    cu_pkg_define_version(${CMAKE_CURRENT_LIST_DIR})
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE
+        ELF_LOADER_VER_MAJOR=1
+        ELF_LOADER_VER_MINOR=3
+        ELF_LOADER_VER_PATCH=1)
 endif()

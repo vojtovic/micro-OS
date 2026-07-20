@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": "../../../Obsidian Vault/projekty/MP3/eps32_s3_led"
+		},
+		{
+			"name": "mp3_test",
+			"path": "../mp3-pedia/mp3_test"
+		},
+		{
+			"name": "os",
+			"path": "../mp3-pedia/os"
+		},
+		{
+			"name": "micro_arch",
+			"path": "."
+		}
+	],
+	"settings": {}
+}

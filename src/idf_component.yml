@@ -1,3 +1,4 @@
 dependencies:
   joltwallet/littlefs: "~=1.20.0"
-  espressif/elf_loader: ">=1.3.0"
+  # espressif/elf_loader is vendored as components/elf_loader (forked at
+  # v1.3.1) — see components/elf_loader/PATCHES.md for local changes.

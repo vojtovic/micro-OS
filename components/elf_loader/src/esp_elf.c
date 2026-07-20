@@ -191,7 +191,14 @@ static int esp_elf_load_section(esp_elf_t *elf, const uint8_t *pbuf)
                          shdr[i].addr, shdr[i].size, shdr[i].offset);
 
                 elf->sec[ELF_SEC_TEXT].v_addr  = shdr[i].addr;
-                elf->sec[ELF_SEC_TEXT].size    = ELF_ALIGN(shdr[i].size, 4);
+                /* micro_arch PATCH-001: store the TRUE section size, not
+                 * ELF_ALIGN(size, 4). The aligned size created a phantom
+                 * 1-3 byte text range that overlapped the start of .rodata,
+                 * so esp_elf_map_sym() resolved early-.rodata pointers into
+                 * ptext and elf_remap_text() then pushed them to the
+                 * ibus-only 0x42xxxxxx alias (LoadStoreError on data reads).
+                 * Alignment is applied at the allocation site only. */
+                elf->sec[ELF_SEC_TEXT].size    = shdr[i].size;
                 elf->sec[ELF_SEC_TEXT].offset  = shdr[i].offset;
 
                 ESP_LOGD(TAG, ".text   offset is 0x%lx size is 0x%x",
@@ -253,7 +260,9 @@ static int esp_elf_load_section(esp_elf_t *elf, const uint8_t *pbuf)
         return -EINVAL;
     }
 
-    elf->ptext = esp_elf_malloc(elf->sec[ELF_SEC_TEXT].size, true);
+    /* micro_arch PATCH-001: alignment padding belongs to the allocation
+     * only — sec[].size must stay the true size for address mapping. */
+    elf->ptext = esp_elf_malloc(ELF_ALIGN(elf->sec[ELF_SEC_TEXT].size, 4), true);
     if (!elf->ptext) {
         ESP_LOGE(TAG, "Failed to malloc %"PRIu32" bytes for text section",
                  (uint32_t)elf->sec[ELF_SEC_TEXT].size);
