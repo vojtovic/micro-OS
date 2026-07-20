@@ -6,12 +6,20 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
+#include "freertos/semphr.h"
 #include <string.h>
 
 static const char *TAG = "display_mux";
 
-static display_slot_t s_drivers[DISPLAY_MUX_MAX_DRIVERS];
-static TaskHandle_t   s_task_handle = NULL;
+static display_slot_t   s_drivers[DISPLAY_MUX_MAX_DRIVERS];
+static TaskHandle_t      s_task_handle = NULL;
+// Serializes the render task against (un)register. Without it, render_all()
+// can call a driver's render() after modstop has unregistered it and freed
+// the module's code — a use-after-free that panics in the module (observed:
+// LoadProhibited in eink render during modstop). unregister() holds this
+// across the slot clear, so it blocks until any in-flight render finishes;
+// the module's memory is only freed after unregister() returns.
+static SemaphoreHandle_t s_lock = NULL;
 
 #define MUX_TASK_STACK   4096
 #define MUX_TASK_PRIO    2
@@ -40,6 +48,9 @@ static void render_all(void)
     char *buf = heap_caps_malloc(MUX_LINE_BUF, MALLOC_CAP_SPIRAM);
     if (!buf) return;
 
+    // Hold the lock across the whole render pass: a driver must not be
+    // unregistered/freed while we are inside its render() (see s_lock).
+    xSemaphoreTake(s_lock, portMAX_DELAY);
     for (int i = 0; i < DISPLAY_MUX_MAX_DRIVERS; i++) {
         if (!s_drivers[i].active || !s_drivers[i].ops->render) continue;
 
@@ -51,6 +62,7 @@ static void render_all(void)
             s_drivers[i].ops->render(buf, len);
         }
     }
+    xSemaphoreGive(s_lock);
 
     heap_caps_free(buf);
 }
@@ -81,6 +93,12 @@ esp_err_t display_mux_init(void)
 {
     memset(s_drivers, 0, sizeof(s_drivers));
 
+    s_lock = xSemaphoreCreateMutex();
+    if (!s_lock) {
+        ESP_LOGE(TAG, "Failed to create display mux lock");
+        return ESP_ERR_NO_MEM;
+    }
+
     BaseType_t ret = xTaskCreate(display_mux_task, "disp_mux",
                                   MUX_TASK_STACK, NULL,
                                   MUX_TASK_PRIO, &s_task_handle);
@@ -101,13 +119,17 @@ esp_err_t display_mux_register(const char *name, const display_driver_ops_t *ops
     // Module .rodata pointers are data-bus addressable — the historic
     // 0x42xxxxxx LoadStoreError was a loader mapping bug, fixed by
     // PATCH-001 in components/elf_loader (see PATCHES.md).
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+
     if (find_name(name)) {
+        xSemaphoreGive(s_lock);
         ESP_LOGW(TAG, "Display '%s' already registered", name);
         return ESP_ERR_INVALID_STATE;
     }
 
     display_slot_t *slot = find_slot();
     if (!slot) {
+        xSemaphoreGive(s_lock);
         ESP_LOGE(TAG, "All %d display slots occupied", DISPLAY_MUX_MAX_DRIVERS);
         return ESP_ERR_NO_MEM;
     }
@@ -121,6 +143,7 @@ esp_err_t display_mux_register(const char *name, const display_driver_ops_t *ops
              slot->name,
              ops->get_cols ? ops->get_cols() : 0,
              ops->get_rows ? ops->get_rows() : 0);
+    xSemaphoreGive(s_lock);
     return ESP_OK;
 }
 
@@ -128,11 +151,19 @@ esp_err_t display_mux_unregister(const char *name)
 {
     if (!name) return ESP_ERR_INVALID_ARG;
 
+    // Taking the lock here blocks until any in-flight render_all() pass
+    // finishes, so the caller (module stop) can safely free the module
+    // once this returns — no render can still be inside its render().
+    xSemaphoreTake(s_lock, portMAX_DELAY);
     display_slot_t *slot = find_name(name);
-    if (!slot) return ESP_ERR_NOT_FOUND;
+    if (!slot) {
+        xSemaphoreGive(s_lock);
+        return ESP_ERR_NOT_FOUND;
+    }
 
     ESP_LOGI(TAG, "Unregistered display '%s'", slot->name);
     memset(slot, 0, sizeof(*slot));
+    xSemaphoreGive(s_lock);
     return ESP_OK;
 }
 

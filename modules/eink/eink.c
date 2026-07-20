@@ -1,3 +1,15 @@
+// Waveshare 3.52inch e-Paper HAT (360x240, mono) loadable driver.
+//
+// Ported from the proven Waveshare 3.52" driver used in the mp3-pedia/os
+// project (controller: UC8xxx-family, PSR command set). This is NOT an
+// SSD1681 (the 1.54" 200x200 part); the command set is entirely different:
+// panel setting 0x00, power 0x01, booster 0x06, resolution 0x61, LUT
+// download 0x20-0x24, data 0x13, refresh 0x17/0xA5. The panel needs its
+// waveform LUT downloaded before every refresh — without it the panel
+// accepts commands but never physically updates.
+//
+// Panel native geometry: 240 wide x 360 tall (portrait), 1bpp, 0xFF = white.
+
 #include "module_types.h"
 #include "display_types.h"
 #include <stdint.h>
@@ -13,15 +25,18 @@ extern void  heap_caps_free(void *ptr);
 extern int   gpio_set_level(int gpio, uint32_t level);
 extern int   gpio_get_level(int gpio);
 extern int   gpio_config(const void *cfg);
+extern void  vTaskDelay(uint32_t ticks);   // CONFIG_FREERTOS_HZ=1000 → ticks == ms
 
 #define MALLOC_CAP_SPIRAM  (1 << 10)
+#define delay_ms(ms)       vTaskDelay(ms)
 
-#define EPD_WIDTH    200
-#define EPD_HEIGHT   200
-#define EPD_BUF_SIZE (EPD_WIDTH * EPD_HEIGHT / 8)
+#define EPD_WIDTH    240
+#define EPD_HEIGHT   360
+#define EPD_BUF_SIZE (EPD_WIDTH * EPD_HEIGHT / 8)   // 10800 bytes
 
-#define EPD_ROWS  25
-#define EPD_COLS  33
+// Text grid using the built-in 5x7 font (6px advance, 8px line height).
+#define EPD_COLS  (EPD_WIDTH / 6)    // 40
+#define EPD_ROWS  (EPD_HEIGHT / 8)   // 45
 
 #define PIN_CLK   12
 #define PIN_MOSI  11
@@ -30,29 +45,44 @@ extern int   gpio_config(const void *cfg);
 #define PIN_RST   17
 #define PIN_BUSY  18
 
-#define GHOSTING_THRESHOLD  10
+static uint8_t *s_framebuf;   // current frame (0xFF = white)
+static uint8_t *s_oldbuf;     // last frame pushed to the panel (change detection)
 
-static uint8_t *s_framebuf;
-static uint8_t *s_oldbuf;
-static int s_partial_count;
-static int s_ghosting_limit = GHOSTING_THRESHOLD;
+// ---------------------------------------------------------------------------
+// Waveform LUTs — "GC" (full-quality) refresh. Trailing entries are zero;
+// C zero-fills the remainder of each fixed-size array, matching the source.
+// ---------------------------------------------------------------------------
+static const uint8_t lut_R20_GC[56] = { 0x01,0x0f,0x0f,0x0f,0x01,0x01,0x01 };
+static const uint8_t lut_R21_GC[42] = { 0x01,0x4f,0x8f,0x0f,0x01,0x01,0x01 };
+static const uint8_t lut_R22_GC[56] = { 0x01,0x0f,0x8f,0x0f,0x01,0x01,0x01 };
+static const uint8_t lut_R23_GC[42] = { 0x01,0x4f,0x8f,0x4f,0x01,0x01,0x01 };
+static const uint8_t lut_R24_GC[42] = { 0x01,0x0f,0x8f,0x4f,0x01,0x01,0x01 };
 
+// ---------------------------------------------------------------------------
+// Low-level SPI (bit-bang, mode 0, MSB first) and control lines
+// ---------------------------------------------------------------------------
 static void epd_gpio_init(void)
 {
-    uint64_t out_mask = (1ULL << PIN_CS) | (1ULL << PIN_DC) | (1ULL << PIN_RST);
-    uint32_t out_cfg[5];
+    // gpio_config_t in ESP-IDF v5.x is 24 bytes (uint64 pin_mask + 4 enums);
+    // use 8 uint32_t = 32 bytes so intr_type (offset 20) is in-bounds/zeroed.
+    // CLK and MOSI MUST be in the output set — the bit-bang SPI drives them,
+    // so a standalone eink (no oled loaded first) needs them as outputs.
+    uint64_t out_mask = (1ULL << PIN_CS)  | (1ULL << PIN_DC)  |
+                        (1ULL << PIN_RST) | (1ULL << PIN_CLK) |
+                        (1ULL << PIN_MOSI);
+    uint32_t out_cfg[8];
     memset(out_cfg, 0, sizeof(out_cfg));
-    out_cfg[0] = out_mask & 0xFFFFFFFF;
-    out_cfg[1] = out_mask >> 32;
-    out_cfg[2] = 2;
+    out_cfg[0] = out_mask & 0xFFFFFFFF;    // pin_bit_mask low 32
+    out_cfg[1] = out_mask >> 32;           // pin_bit_mask high 32
+    out_cfg[2] = 2;                        // mode = GPIO_MODE_OUTPUT
     gpio_config(out_cfg);
 
     uint64_t in_mask = (1ULL << PIN_BUSY);
-    uint32_t in_cfg[5];
+    uint32_t in_cfg[8];
     memset(in_cfg, 0, sizeof(in_cfg));
     in_cfg[0] = in_mask & 0xFFFFFFFF;
     in_cfg[1] = in_mask >> 32;
-    in_cfg[2] = 1;
+    in_cfg[2] = 1;                         // mode = GPIO_MODE_INPUT
     gpio_config(in_cfg);
 
     gpio_set_level(PIN_CS, 1);
@@ -83,141 +113,106 @@ static void epd_data(uint8_t data)
     epd_spi_write_byte(data);
 }
 
+// BUSY is HIGH while the panel is busy (matches the proven mono driver).
 static void epd_wait_busy(void)
 {
-    int timeout = 50000;
-    while (gpio_get_level(PIN_BUSY) == 1 && timeout-- > 0) {
-        for (volatile int i = 0; i < 100; i++);
+    int timeout_ms = 8000;
+    while (gpio_get_level(PIN_BUSY) == 1) {
+        delay_ms(10);
+        timeout_ms -= 10;
+        if (timeout_ms <= 0) {
+            vconsole_printf("[eink] BUSY timeout\n");
+            break;
+        }
     }
+    delay_ms(200);
 }
 
 static void epd_reset(void)
 {
     gpio_set_level(PIN_RST, 1);
-    for (volatile int i = 0; i < 50000; i++);
+    delay_ms(200);
     gpio_set_level(PIN_RST, 0);
-    for (volatile int i = 0; i < 50000; i++);
+    delay_ms(2);
     gpio_set_level(PIN_RST, 1);
-    for (volatile int i = 0; i < 50000; i++);
+    delay_ms(200);
 }
 
-static void epd_hw_init_full(void)
+// ---------------------------------------------------------------------------
+// Controller init + LUT + refresh (ported from mp3-pedia/os EPD_3in52)
+// ---------------------------------------------------------------------------
+static void epd_init(void)
 {
     epd_reset();
-    epd_wait_busy();
 
-    epd_cmd(0x12);
-    epd_wait_busy();
-
-    epd_cmd(0x01);
-    epd_data((EPD_HEIGHT - 1) & 0xFF);
-    epd_data(((EPD_HEIGHT - 1) >> 8) & 0xFF);
-    epd_data(0x00);
-
-    epd_cmd(0x11);
-    epd_data(0x01);
-
-    epd_cmd(0x44);
-    epd_data(0x00);
-    epd_data((EPD_WIDTH / 8) - 1);
-
-    epd_cmd(0x45);
-    epd_data((EPD_HEIGHT - 1) & 0xFF);
-    epd_data(((EPD_HEIGHT - 1) >> 8) & 0xFF);
-    epd_data(0x00);
-    epd_data(0x00);
-
-    epd_cmd(0x4E);
-    epd_data(0x00);
-    epd_cmd(0x4F);
-    epd_data((EPD_HEIGHT - 1) & 0xFF);
-    epd_data(((EPD_HEIGHT - 1) >> 8) & 0xFF);
-
-    epd_cmd(0x3C);
-    epd_data(0x05);
-
-    epd_cmd(0x21);
-    epd_data(0x00);
-    epd_data(0x80);
-}
-
-static void epd_hw_init_partial(void)
-{
-    epd_reset();
-    epd_wait_busy();
-
-    epd_cmd(0x3C);
-    epd_data(0x80);
-
-    epd_cmd(0x01);
-    epd_data((EPD_HEIGHT - 1) & 0xFF);
-    epd_data(((EPD_HEIGHT - 1) >> 8) & 0xFF);
-    epd_data(0x00);
-
-    epd_cmd(0x11);
-    epd_data(0x01);
-
-    epd_cmd(0x44);
-    epd_data(0x00);
-    epd_data((EPD_WIDTH / 8) - 1);
-
-    epd_cmd(0x45);
-    epd_data((EPD_HEIGHT - 1) & 0xFF);
-    epd_data(((EPD_HEIGHT - 1) >> 8) & 0xFF);
-    epd_data(0x00);
-    epd_data(0x00);
-
-    epd_cmd(0x4E);
-    epd_data(0x00);
-    epd_cmd(0x4F);
-    epd_data((EPD_HEIGHT - 1) & 0xFF);
-    epd_data(((EPD_HEIGHT - 1) >> 8) & 0xFF);
-
-    epd_cmd(0x21);
-    epd_data(0x00);
-    epd_data(0x80);
-}
-
-static void epd_display_full(const uint8_t *buf)
-{
-    epd_hw_init_full();
-
-    epd_cmd(0x24);
-    for (int i = 0; i < EPD_BUF_SIZE; i++) {
-        epd_data(buf[i]);
-    }
-
-    epd_cmd(0x26);
-    for (int i = 0; i < EPD_BUF_SIZE; i++) {
-        epd_data(buf[i]);
-    }
-
-    epd_cmd(0x22);
-    epd_data(0xF7);
-    epd_cmd(0x20);
-    epd_wait_busy();
-}
-
-static void epd_display_partial(const uint8_t *buf)
-{
-    epd_hw_init_partial();
-
-    epd_cmd(0x26);
-    for (int i = 0; i < EPD_BUF_SIZE; i++) {
-        epd_data(s_oldbuf[i]);
-    }
-
-    epd_cmd(0x24);
-    for (int i = 0; i < EPD_BUF_SIZE; i++) {
-        epd_data(buf[i]);
-    }
-
-    epd_cmd(0x22);
+    epd_cmd(0x00);              // panel setting (PSR)
     epd_data(0xFF);
-    epd_cmd(0x20);
-    epd_wait_busy();
+    epd_data(0x01);
+
+    epd_cmd(0x01);              // power setting
+    epd_data(0x03);
+    epd_data(0x10);
+    epd_data(0x3F);
+    epd_data(0x3F);
+    epd_data(0x03);
+
+    epd_cmd(0x06);              // booster soft start
+    epd_data(0x37);
+    epd_data(0x3D);
+    epd_data(0x3D);
+
+    epd_cmd(0x60);              // TCON
+    epd_data(0x22);
+
+    epd_cmd(0x82);             // VCOM_DC
+    epd_data(0x07);
+
+    epd_cmd(0x30);
+    epd_data(0x09);
+
+    epd_cmd(0xE3);             // power saving
+    epd_data(0x88);
+
+    epd_cmd(0x61);             // resolution: 240 x 360
+    epd_data(0xF0);
+    epd_data(0x01);
+    epd_data(0x68);
+
+    epd_cmd(0x50);
+    epd_data(0xB7);
 }
 
+static void epd_lut_gc(void)
+{
+    int i;
+    epd_cmd(0x20);  for (i = 0; i < 56; i++) epd_data(lut_R20_GC[i]);
+    epd_cmd(0x21);  for (i = 0; i < 42; i++) epd_data(lut_R21_GC[i]);
+    epd_cmd(0x24);  for (i = 0; i < 42; i++) epd_data(lut_R24_GC[i]);
+    epd_cmd(0x22);  for (i = 0; i < 56; i++) epd_data(lut_R22_GC[i]);
+    epd_cmd(0x23);  for (i = 0; i < 42; i++) epd_data(lut_R23_GC[i]);
+}
+
+static void epd_refresh(void)
+{
+    epd_cmd(0x17);
+    epd_data(0xA5);
+    epd_wait_busy();
+    delay_ms(200);
+}
+
+// Push the framebuffer and trigger a full-quality refresh.
+static void epd_full_update(const uint8_t *buf)
+{
+    epd_cmd(0x13);                          // transfer new data
+    for (int i = 0; i < EPD_BUF_SIZE; i++)
+        epd_data(buf[i]);
+    epd_lut_gc();
+    epd_refresh();
+}
+
+// ---------------------------------------------------------------------------
+// Framebuffer text rendering (5x7 font, black text on white)
+// ---------------------------------------------------------------------------
 static const uint8_t font_5x7[] = {
     0x00,0x00,0x00,0x00,0x00,
     0x00,0x00,0x5F,0x00,0x00,
@@ -340,14 +335,18 @@ static void epd_draw_char(int col, int row, char c)
     for (int dx = 0; dx < 5; dx++) {
         uint8_t bits = font_5x7[idx + dx];
         for (int dy = 0; dy < 8; dy++) {
+            // font bit set -> black pixel (color 0); background stays white (1)
             epd_set_pixel(x0 + dx, y0 + dy, (bits >> dy) & 1 ? 0 : 1);
         }
     }
     for (int dy = 0; dy < 8; dy++) {
-        epd_set_pixel(x0 + 5, y0 + dy, 1);
+        epd_set_pixel(x0 + 5, y0 + dy, 1);   // inter-glyph column: white
     }
 }
 
+// ---------------------------------------------------------------------------
+// display_mux driver ops
+// ---------------------------------------------------------------------------
 static void eink_render(const char *text, size_t len)
 {
     if (!s_framebuf || !s_oldbuf) return;
@@ -367,14 +366,16 @@ static void eink_render(const char *text, size_t len)
         }
     }
 
-    if (s_partial_count >= s_ghosting_limit) {
-        epd_display_full(s_framebuf);
-        s_partial_count = 0;
-    } else {
-        epd_display_partial(s_framebuf);
-        s_partial_count++;
+    // E-paper refresh is slow (~2 s) and wears the panel; skip it when the
+    // rendered frame is identical to what is already on the display.
+    // (Inline compare — memcmp is not in the kernel symbol table.)
+    int changed = 0;
+    for (int i = 0; i < EPD_BUF_SIZE; i++) {
+        if (s_framebuf[i] != s_oldbuf[i]) { changed = 1; break; }
     }
+    if (!changed) return;
 
+    epd_full_update(s_framebuf);
     memcpy(s_oldbuf, s_framebuf, EPD_BUF_SIZE);
 }
 
@@ -382,14 +383,13 @@ static void eink_clear(void)
 {
     if (!s_framebuf) return;
     memset(s_framebuf, 0xFF, EPD_BUF_SIZE);
-    epd_display_full(s_framebuf);
+    epd_full_update(s_framebuf);
     if (s_oldbuf) memcpy(s_oldbuf, s_framebuf, EPD_BUF_SIZE);
-    s_partial_count = 0;
 }
 
 static int eink_get_rows(void) { return EPD_ROWS; }
 static int eink_get_cols(void) { return EPD_COLS; }
-static uint32_t eink_get_caps(void) { return (1 << 0); }
+static uint32_t eink_get_caps(void) { return DISPLAY_CAP_PARTIAL_REFRESH; }
 
 static const display_driver_ops_t s_display_ops = {
     .init     = NULL,
@@ -414,15 +414,16 @@ static int eink_start(void)
     }
 
     memset(s_framebuf, 0xFF, EPD_BUF_SIZE);
-    memset(s_oldbuf,   0xFF, EPD_BUF_SIZE);
-    s_partial_count = 0;
+    // Force the first render to differ from s_oldbuf so it always draws.
+    memset(s_oldbuf, 0x00, EPD_BUF_SIZE);
 
     epd_gpio_init();
+    epd_init();
     eink_clear();
 
     display_mux_register("eink", &s_display_ops);
-    vconsole_printf("[eink] Waveshare 200x200 e-paper ready (ghosting limit: %d)\n",
-                    s_ghosting_limit);
+    vconsole_printf("[eink] Waveshare 3.52\" 360x240 e-paper ready (%dx%d chars)\n",
+                    EPD_COLS, EPD_ROWS);
     return 0;
 }
 
@@ -430,9 +431,8 @@ static int eink_stop(void)
 {
     display_mux_unregister("eink");
 
-    epd_cmd(0x10);
-    epd_data(0x01);
-    epd_wait_busy();
+    epd_cmd(0x07);          // deep sleep
+    epd_data(0xA5);
 
     if (s_framebuf) { heap_caps_free(s_framebuf); s_framebuf = NULL; }
     if (s_oldbuf)   { heap_caps_free(s_oldbuf);   s_oldbuf = NULL; }
@@ -445,7 +445,7 @@ static module_info_t info = {
     .magic       = MODULE_MAGIC,
     .abi_version = MODULE_ABI_VERSION,
     .name        = "eink",
-    .version     = "1.0.0",
+    .version     = "2.0.0",
     .requires    = "vconsole",
     .flags       = 0,
 };

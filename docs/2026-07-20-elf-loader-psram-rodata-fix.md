@@ -111,14 +111,31 @@ by both kernel and module. `elf_remap_text()` no longer touches it.
 
 ## Test plan (on hardware — build alone cannot validate this)
 
+Affected-module analysis (static, from the built ELFs): the bug only fires
+when `.text` size is **not** 4-byte aligned **and** `.rodata` starts
+immediately after it. Of the current modules:
+
+| Module   | `.text` size | 4B-aligned | `.rodata` adjacent | Was poisoned |
+|----------|--------------|------------|--------------------|--------------|
+| `oled`   | `0x46F`      | no         | yes                | **yes** (known crash) |
+| `eink`   | `0x72F`      | no         | yes                | **yes** (latent) |
+| `hello`  | `0x74`       | yes        | yes                | no (align was a no-op) |
+| `badabi` | `0x34`       | yes        | no                 | no |
+
+So `oled` and `eink` are the two real regression tests; `hello`/`badabi`
+were structurally immune and only serve as smoke/leak/ABI checks.
+
 1. `pio run -t upload -t monitor`
 2. `modload oled` → expect clean `Registered display 'oled' (…)` log — the
    exact line that used to crash.
-3. `display list` → name must read `oled`, not garbage (catches the silent
-   SRAM-mode corruption).
-4. `modload hello && modunload hello` ×10, `mem` before/after → no leak.
-5. `lsmod -v` → module memory now reported in PSRAM again.
-6. `modload eink`, `modload badabi` (ABI negative test still rejects).
+3. `modload eink` → second poisoned module; expect a clean register log too.
+   If oled passes but eink faults, the fix is incomplete — investigate
+   before trusting it.
+4. `display list` → both names must read correctly, not garbage (catches the
+   silent SRAM-mode corruption the old workaround produced).
+5. `modload hello && modunload hello` ×10, `mem` before/after → no leak.
+6. `lsmod -v` → module memory now reported in PSRAM again.
+7. `modload badabi` → ABI negative test still rejects.
 
 ## Rollback
 

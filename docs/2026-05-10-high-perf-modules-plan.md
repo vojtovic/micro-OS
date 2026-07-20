@@ -642,6 +642,47 @@ Benchmark must run in the existing shell with `bench gfx`, `bench audio`, `bench
 
 ---
 
+## 6b. Post-implementation review (2026-07-20)
+
+Findings from a code-grounded review after 5.1 + 5.3a shipped. These revise
+the plan; act on them before committing more effort to 5.2b.
+
+1. **`bench` moves to Phase 5.0 (was §5 / 5.3).** Nothing downstream should
+   be built before the tool that measures the premise. Run it on the current
+   PSRAM-only baseline first.
+
+2. **5.2b (module `.iram*` → internal SRAM) is re-classified cancellable,
+   not merely deferred.** Rationale: (a) 5.1's 32 KB 8-way I-cache + 64 B
+   lines + XIP already recovers most of the "20–40%" for tight hot loops,
+   which is a cache-miss figure, not a hot-loop figure; (b) 5.3's ABI
+   delegation moves the actual hot loops into kernel IRAM/flash, so an
+   ABI-using module's own `.text` placement barely matters. Decision gate:
+   after 5.3, `bench gfx` on a PSRAM-resident vs static-linked build. Ship
+   5.2b only if the measured gap on real workloads exceeds ~10%. The forked
+   loader rewrite (see note 5) is expensive; don't pay for it on faith.
+
+3. **SH1106 blit budget is idealized.** §1's "SPI DMA push ≈ 205 µs" treats a
+   frame as one shot; the SH1106 is page-addressed, so a full frame is 8 data
+   bursts with a command/DC-toggle sequence between pages. Re-derive the
+   frame budget from a measured `display_blit_async` before quoting 60 fps.
+
+4. **`GFX_FB_DOUBLE` should be a per-driver capability, not a first-class ABI
+   flag.** For a single full-screen animator on a bus-holding page-addressed
+   panel, the second plane buys little.
+
+5. **§1 "hash table sized at 128 — O(1)" is inaccurate.** `symtab.c` is a flat
+   array; the component resolves by linear `strcmp` (`esp_elf_find_symbol`).
+   Harmless (44 symbols, load-time only, dwarfed by SD read + relocation) but
+   do not build an "O(1)" assumption on it. Also: the 5.2b placement loop in
+   §3.1 is a *rewrite* of upstream `esp_elf_load_section` (which builds one
+   combined data blob and whose relocation walker assumes that layout), not a
+   drop-in callback — another reason to gate it behind measurement.
+
+6. **Loader hygiene (done 2026-07-20):** `elf_loader_load` now frees the raw
+   ELF `file_buf` at end-of-load instead of holding it in PSRAM until unload
+   (it is dead post-relocation; esp_elf retains no pointers into it). Modest
+   on 8 MB PSRAM but correct and scales with concurrent module count.
+
 ## 7. Out of Scope
 
 Explicitly deferred — listed so they don't get re-litigated:

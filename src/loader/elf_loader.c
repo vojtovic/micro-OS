@@ -116,6 +116,16 @@ esp_err_t elf_loader_load(const char *path, elf_load_result_t *result)
                       "(Phase 5.2b will move it to internal SRAM)",
                  result->iram_text_size);
     }
+
+    // The raw ELF file buffer is dead once relocation has copied .text/.data
+    // into their own allocations (esp_elf keeps no pointers into it — the
+    // only path that would, ELF_DYNAMIC_LOAD_SHARED_OBJECT, is disabled) and
+    // the section scan above has read its headers. Free it now instead of
+    // holding the whole file in PSRAM for the module's entire resident life;
+    // file_size is retained separately for `modinfo`. elf_loader_unload stays
+    // correct via its NULL guard.
+    heap_caps_free(result->file_buf);
+    result->file_buf = NULL;
     return ESP_OK;
 }
 
