@@ -3,6 +3,7 @@
 #include "shell/cmd_system.h"
 #include "shell/cmd_diag.h"
 #include "shell/cmd_module.h"
+#include "shell/cmd_bench.h"
 #include "services/display_mux.h"
 #include "services/wifi.h"
 #include "services/pkg_manager.h"
@@ -321,6 +322,10 @@ esp_err_t shell_init(void)
 
     // Diagnostic commands (i2cdetect, devls, gpio, loglevel, etc.)
     ret = cmd_diag_register();
+    if (ret != ESP_OK) return ret;
+
+    // Micro-benchmarks (bench cpu|mem|gfx)
+    ret = cmd_bench_register();
     if (ret != ESP_OK) return ret;
 
     // Config parser command

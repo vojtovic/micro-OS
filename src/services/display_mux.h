@@ -20,6 +20,10 @@ esp_err_t display_mux_unregister(const char *name);
 int       display_mux_count(void);
 const display_slot_t *display_mux_get(int index);
 
+// Push the current console to one named display (NULL = all active displays).
+// For slow, on-demand displays (e-ink) that are not auto-mirrored live.
+esp_err_t display_mux_refresh(const char *name);
+
 esp_err_t cmd_display_register(void);
 
 #endif

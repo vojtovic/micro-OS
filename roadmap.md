@@ -61,12 +61,13 @@ The system boots into a CLI and supports installing drivers/apps as modules from
 ## Phase 3 - Display Stack
 **Goal:** multi-screen output with predictable behavior.
 
-- [x] OLED output driver/service for low-latency terminal feedback.
-- [x] E-ink service with partial refresh and configurable ghosting policy.
-- [x] Display multiplexer: mirror/route virtual console to both displays.
+- [x] OLED output driver/service for low-latency terminal feedback (SH1106, working on HW).
+- [x] E-ink service — Waveshare 3.52" 360x240 mono (UC8xxx), working on HW (2026-07-20). Driver ported from mp3-pedia/os EPD_3in52 reference.
+- [x] Display multiplexer: mirror/route virtual console to displays.
+- [x] Refresh policy: FAST_REFRESH displays (OLED) auto-mirror live; slow displays (e-ink) refresh on demand via `display refresh [name]` to avoid a ~2s full refresh per console line.
 
 **Exit criteria**
-- Shell output appears on both displays by policy.
+- Shell output appears on displays by policy. ✓ (OLED live, e-ink on-demand)
 - E-ink ghosting/full-refresh behavior is measurable and tunable.
 
 ## Phase 4 - Networking and Packages
@@ -86,8 +87,9 @@ The system boots into a CLI and supports installing drivers/apps as modules from
 **Goal:** Make loaded ELF modules run at near-native speed for graphics, audio, and DMA-heavy workloads.
 See [docs/2026-05-10-high-perf-modules-plan.md](docs/2026-05-10-high-perf-modules-plan.md) for the detailed design.
 
+- [x] **5.0 Bench harness** - `bench cpu|mem|gfx|all` shell command. `bench mem` (internal-DRAM vs PSRAM memcpy bandwidth) is the measurement that gates the 5.2b decision; run it on HW before investing in the loader IRAM fork.
 - [x] **5.1 Memory plumbing** - module IRAM pool (soft budget), cache config tuning, `dma_buf_alloc` helper, extended `mem` diagnostics.
-- [~] **5.2 ELF loader IRAM placement** - PARTIAL (5.2a done): scan `.iram*`/`.dram_data` sections in loaded ELFs, account per-module, `lsmod -v` shows IRAM/DRAM/PSRAM bytes + IRAM_DEGRADED flag, warn on load that IRAM_ATTR code is in PSRAM. `espressif/elf_loader` is now vendored at `components/elf_loader` (fork of v1.3.1, see `components/elf_loader/PATCHES.md`) — PATCH-001 fixed an unrelated `.rodata` pointer bug (2026-07-20, see [docs/2026-07-20-elf-loader-psram-rodata-fix.md](docs/2026-07-20-elf-loader-psram-rodata-fix.md)) that had forced modules onto internal SRAM; PSRAM loading is restored. Real IRAM placement (5.2b, PATCH-002) still requires patching `esp_elf_load_section` + the Xtensa relocation walker for `.iram*` sections (deferred).
+- [~] **5.2 ELF loader IRAM placement** - PARTIAL (5.2a done): scan `.iram*`/`.dram_data` sections in loaded ELFs, account per-module, `lsmod -v` shows IRAM/DRAM/PSRAM bytes + IRAM_DEGRADED flag, warn on load that IRAM_ATTR code is in PSRAM. `espressif/elf_loader` is now vendored at `components/elf_loader` (fork of v1.3.1, see `components/elf_loader/PATCHES.md`) — PATCH-001 fixed an unrelated `.rodata` pointer bug (2026-07-20, see [docs/2026-07-20-elf-loader-psram-rodata-fix.md](docs/2026-07-20-elf-loader-psram-rodata-fix.md)) that had forced modules onto internal SRAM; PSRAM loading is restored. Real IRAM placement (5.2b, PATCH-002) — **CANCELLED (2026-07-20)**. `bench mem` on hardware measured internal-DRAM 252.9 MB/s vs PSRAM 245.7 MB/s (≈3% gap): the 5.1 cache config already makes PSRAM effectively as fast as internal SRAM, so the multi-day loader fork isn't worth it. Perf-critical modules that ever need true native speed use the static-link escape hatch (5.5) instead.
 - [~] **5.3 Kernel ABI: graphics + DMA** - PARTIAL (5.3a done): 13 new exports (gfx_fb_alloc/free, gfx_set/get_pixel, gfx_fill/copy_rect, gfx_blit_masked, cache_flush/invalidate_range, dma_buf_alloc/sync/free). Deferred to 5.3b: gfx_draw_text + font system, display_blit_async (DMA SPI integration), generic dma_submit/_sync, port oled/eink to new ABI.
 - [ ] **5.4 Kernel ABI: audio** - 8 new exports (`audio_*`); I2S DMA + ESP-DSP wrappers; sample tone-gen module.
 - [ ] **5.5 Static-link escape hatch** - `MODULES_STATIC` build flag; constructor-section auto-registration; same source compiles loaded or static.

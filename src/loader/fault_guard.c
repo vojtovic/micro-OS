@@ -21,7 +21,7 @@ bool fault_guard_last_faulted(void)
     return s_last_faulted;
 }
 
-esp_err_t fault_guard_call(int (*fn)(void), int *result)
+esp_err_t fault_guard_call(int (*fn)(void), int *result, bool check_leak)
 {
     if (!fn) {
         ESP_LOGE(TAG, "NULL function pointer");
@@ -49,7 +49,8 @@ esp_err_t fault_guard_call(int (*fn)(void), int *result)
     if (result) *result = ret;
 
     size_t heap_after = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    if (heap_before > heap_after && (heap_before - heap_after) > LEAK_WARN_BYTES) {
+    if (check_leak && heap_before > heap_after &&
+        (heap_before - heap_after) > LEAK_WARN_BYTES) {
         ESP_LOGW(TAG, "Module call leaked ~%zu bytes of PSRAM",
                  heap_before - heap_after);
     }

@@ -14,6 +14,7 @@
 #include "display_types.h"
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include <string.h>
 
 extern void module_register(module_exports_t *exports);
@@ -48,15 +49,39 @@ extern void  vTaskDelay(uint32_t ticks);   // CONFIG_FREERTOS_HZ=1000 → ticks 
 static uint8_t *s_framebuf;   // current frame (0xFF = white)
 static uint8_t *s_oldbuf;     // last frame pushed to the panel (change detection)
 
+#define EPD_STRIDE  (EPD_WIDTH / 8)   // 30 bytes per row
+
+// EINK_PARTIAL: experimental UC8253 partial-window refresh (0x90/0x91/0x92).
+// Refreshes only the changed row band instead of the whole panel — faster and
+// localizes ghosting. The official Waveshare 3.52" driver does NOT ship this,
+// so the panel may not support it: if the display shows garbage, set to 0 to
+// fall back to full-frame DU/GC updates.
+#define EINK_PARTIAL     1
+
+// Refresh cadence: use fast DU refreshes, force a full GC refresh every
+// GHOSTING_LIMIT updates to clear accumulated ghosting. Waveshare's 3.52"
+// guidance is a full refresh after at most ~5 partials; we use 3 to keep
+// ghosting low (lower = cleaner but more frequent full-flash).
+#define GHOSTING_LIMIT   3
+static int s_partial_count;
+
 // ---------------------------------------------------------------------------
 // Waveform LUTs — "GC" (full-quality) refresh. Trailing entries are zero;
 // C zero-fills the remainder of each fixed-size array, matching the source.
 // ---------------------------------------------------------------------------
+// "GC" — full/quality refresh (clears ghosting, ~2s, black/white flash).
 static const uint8_t lut_R20_GC[56] = { 0x01,0x0f,0x0f,0x0f,0x01,0x01,0x01 };
 static const uint8_t lut_R21_GC[42] = { 0x01,0x4f,0x8f,0x0f,0x01,0x01,0x01 };
 static const uint8_t lut_R22_GC[56] = { 0x01,0x0f,0x8f,0x0f,0x01,0x01,0x01 };
 static const uint8_t lut_R23_GC[42] = { 0x01,0x4f,0x8f,0x4f,0x01,0x01,0x01 };
 static const uint8_t lut_R24_GC[42] = { 0x01,0x0f,0x8f,0x4f,0x01,0x01,0x01 };
+
+// "DU" — fast/partial refresh (~0.3s, no full flash, accumulates ghosting).
+static const uint8_t lut_R20_DU[56] = { 0x01,0x0f,0x01,0x00,0x00,0x01,0x01 };
+static const uint8_t lut_R21_DU[42] = { 0x01,0x0f,0x01,0x00,0x00,0x01,0x01 };
+static const uint8_t lut_R22_DU[56] = { 0x01,0x8f,0x01,0x00,0x00,0x01,0x01 };
+static const uint8_t lut_R23_DU[42] = { 0x01,0x4f,0x01,0x00,0x00,0x01,0x01 };
+static const uint8_t lut_R24_DU[42] = { 0x01,0x0f,0x01,0x00,0x00,0x01,0x01 };
 
 // ---------------------------------------------------------------------------
 // Low-level SPI (bit-bang, mode 0, MSB first) and control lines
@@ -192,6 +217,16 @@ static void epd_lut_gc(void)
     epd_cmd(0x23);  for (i = 0; i < 42; i++) epd_data(lut_R23_GC[i]);
 }
 
+static void epd_lut_du(void)
+{
+    int i;
+    epd_cmd(0x20);  for (i = 0; i < 56; i++) epd_data(lut_R20_DU[i]);
+    epd_cmd(0x21);  for (i = 0; i < 42; i++) epd_data(lut_R21_DU[i]);
+    epd_cmd(0x24);  for (i = 0; i < 42; i++) epd_data(lut_R24_DU[i]);
+    epd_cmd(0x22);  for (i = 0; i < 56; i++) epd_data(lut_R22_DU[i]);
+    epd_cmd(0x23);  for (i = 0; i < 42; i++) epd_data(lut_R23_DU[i]);
+}
+
 static void epd_refresh(void)
 {
     epd_cmd(0x17);
@@ -200,15 +235,46 @@ static void epd_refresh(void)
     delay_ms(200);
 }
 
-// Push the framebuffer and trigger a full-quality refresh.
-static void epd_full_update(const uint8_t *buf)
+// Push the framebuffer and refresh. full=true → GC (quality, clears ghosting);
+// full=false → DU (fast/partial, ~0.3s, accumulates ghosting).
+static void epd_update(const uint8_t *buf, bool full)
 {
     epd_cmd(0x13);                          // transfer new data
     for (int i = 0; i < EPD_BUF_SIZE; i++)
         epd_data(buf[i]);
-    epd_lut_gc();
+    if (full) epd_lut_gc();
+    else      epd_lut_du();
     epd_refresh();
 }
+
+#if EINK_PARTIAL
+// Experimental: refresh only rows [y0,y1] (full width) via the UC8253
+// partial-window commands + a fast DU refresh. See EINK_PARTIAL above.
+static void epd_update_partial(const uint8_t *buf, int y0, int y1)
+{
+    if (y0 < 0) y0 = 0;
+    if (y1 > EPD_HEIGHT - 1) y1 = EPD_HEIGHT - 1;
+    if (y1 < y0) return;
+
+    epd_cmd(0x91);                          // PTIN — partial in
+    epd_cmd(0x90);                          // PTL — partial window
+    epd_data(0x00);                         // HRST: x_start = 0
+    epd_data((EPD_WIDTH - 1) | 0x07);       // HRED: x_end = 239 (byte-aligned)
+    epd_data((y0 >> 8) & 0x01);             // VRST[8]
+    epd_data(y0 & 0xFF);                    // VRST[7:0]
+    epd_data((y1 >> 8) & 0x01);             // VRED[8]
+    epd_data(y1 & 0xFF);                    // VRED[7:0]
+
+    epd_cmd(0x13);                          // new data — window rows only
+    for (int y = y0; y <= y1; y++)
+        for (int b = 0; b < EPD_STRIDE; b++)
+            epd_data(buf[y * EPD_STRIDE + b]);
+
+    epd_lut_du();
+    epd_refresh();
+    epd_cmd(0x92);                          // PTOUT — partial out
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // Framebuffer text rendering (5x7 font, black text on white)
@@ -369,13 +435,32 @@ static void eink_render(const char *text, size_t len)
     // E-paper refresh is slow (~2 s) and wears the panel; skip it when the
     // rendered frame is identical to what is already on the display.
     // (Inline compare — memcmp is not in the kernel symbol table.)
-    int changed = 0;
+    // Find the band of rows that changed since the last frame on the panel.
+    int y0 = EPD_HEIGHT, y1 = -1;
     for (int i = 0; i < EPD_BUF_SIZE; i++) {
-        if (s_framebuf[i] != s_oldbuf[i]) { changed = 1; break; }
+        if (s_framebuf[i] != s_oldbuf[i]) {
+            int row = i / EPD_STRIDE;
+            if (row < y0) y0 = row;
+            if (row > y1) y1 = row;
+        }
     }
-    if (!changed) return;
+    if (y1 < 0) return;   // nothing changed
 
-    epd_full_update(s_framebuf);
+    // Force a full GC refresh periodically to wipe accumulated ghosting;
+    // otherwise refresh only the changed band (partial) or full frame (DU).
+    bool full = (s_partial_count >= GHOSTING_LIMIT);
+#if EINK_PARTIAL
+    if (full) {
+        epd_update(s_framebuf, true);
+        s_partial_count = 0;
+    } else {
+        epd_update_partial(s_framebuf, y0, y1);
+        s_partial_count++;
+    }
+#else
+    epd_update(s_framebuf, full);
+    s_partial_count = full ? 0 : (s_partial_count + 1);
+#endif
     memcpy(s_oldbuf, s_framebuf, EPD_BUF_SIZE);
 }
 
@@ -383,7 +468,8 @@ static void eink_clear(void)
 {
     if (!s_framebuf) return;
     memset(s_framebuf, 0xFF, EPD_BUF_SIZE);
-    epd_full_update(s_framebuf);
+    epd_update(s_framebuf, true);   // clear is always a full refresh
+    s_partial_count = 0;
     if (s_oldbuf) memcpy(s_oldbuf, s_framebuf, EPD_BUF_SIZE);
 }
 
@@ -445,7 +531,7 @@ static module_info_t info = {
     .magic       = MODULE_MAGIC,
     .abi_version = MODULE_ABI_VERSION,
     .name        = "eink",
-    .version     = "2.0.0",
+    .version     = "2.2.0",
     .requires    = "vconsole",
     .flags       = 0,
 };

@@ -11,6 +11,7 @@ static size_t fmt_stride(uint16_t w, gfx_fmt_t fmt)
 {
     switch (fmt) {
     case GFX_FMT_MONO_VLSB: return ((w + 7) / 8);
+    case GFX_FMT_MONO_HMSB: return ((w + 7) / 8);
     case GFX_FMT_RGB565:    return w * 2;
     case GFX_FMT_GRAY4:     return (w + 1) / 2;
     default:                return 0;
@@ -21,6 +22,7 @@ static size_t fmt_bytes(uint16_t w, uint16_t h, gfx_fmt_t fmt)
 {
     switch (fmt) {
     case GFX_FMT_MONO_VLSB: return ((h + 7) / 8) * w;  /* page-stride */
+    case GFX_FMT_MONO_HMSB: return ((w + 7) / 8) * h;  /* row-stride */
     case GFX_FMT_RGB565:    return (size_t)w * h * 2;
     case GFX_FMT_GRAY4:     return ((w + 1) / 2) * h;
     default:                return 0;
@@ -83,6 +85,12 @@ void gfx_set_pixel(gfx_fb_t *fb, int x, int y, uint32_t color)
         if (color) *p |= m; else *p &= ~m;
         break;
     }
+    case GFX_FMT_MONO_HMSB: {
+        uint8_t *p = &fb->pixels[y * fb->stride + (x >> 3)];
+        uint8_t  m = 1u << (7 - (x & 7));
+        if (color) *p |= m; else *p &= ~m;
+        break;
+    }
     case GFX_FMT_RGB565: {
         uint16_t *p = (uint16_t *)(fb->pixels + y * fb->stride + x * 2);
         *p = (uint16_t)color;
@@ -104,6 +112,8 @@ uint32_t gfx_get_pixel(const gfx_fb_t *fb, int x, int y)
     switch (fb->fmt) {
     case GFX_FMT_MONO_VLSB:
         return (fb->pixels[(y / 8) * fb->w + x] >> (y & 7)) & 1;
+    case GFX_FMT_MONO_HMSB:
+        return (fb->pixels[y * fb->stride + (x >> 3)] >> (7 - (x & 7))) & 1;
     case GFX_FMT_RGB565:
         return *(uint16_t *)(fb->pixels + y * fb->stride + x * 2);
     case GFX_FMT_GRAY4: {

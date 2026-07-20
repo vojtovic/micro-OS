@@ -43,6 +43,22 @@ static display_slot_t *find_name(const char *name)
     return NULL;
 }
 
+// Render the current console tail onto one driver. Caller must hold s_lock.
+static void render_slot(display_slot_t *d, char *buf)
+{
+    if (!d->active || !d->ops->render) return;
+
+    int rows = d->ops->get_rows ? d->ops->get_rows() : 8;
+    size_t len = vconsole_get_lines(rows, buf, MUX_LINE_BUF);
+    if (len > 0) {
+        d->ops->render(buf, len);
+    }
+}
+
+// Automatic mirror pass, driven by new console data. Only FAST_REFRESH
+// displays (e.g. OLED) are mirrored live; slow displays (e-ink, whose full
+// refresh takes ~2 s and wears the panel) are skipped here and refreshed on
+// demand via display_mux_refresh() / `display refresh`.
 static void render_all(void)
 {
     char *buf = heap_caps_malloc(MUX_LINE_BUF, MALLOC_CAP_SPIRAM);
@@ -52,19 +68,41 @@ static void render_all(void)
     // unregistered/freed while we are inside its render() (see s_lock).
     xSemaphoreTake(s_lock, portMAX_DELAY);
     for (int i = 0; i < DISPLAY_MUX_MAX_DRIVERS; i++) {
-        if (!s_drivers[i].active || !s_drivers[i].ops->render) continue;
+        display_slot_t *d = &s_drivers[i];
+        if (!d->active) continue;
 
-        int rows = s_drivers[i].ops->get_rows
-                   ? s_drivers[i].ops->get_rows() : 8;
+        uint32_t caps = d->ops->get_caps ? d->ops->get_caps() : 0;
+        if (!(caps & DISPLAY_CAP_FAST_REFRESH)) continue;   // slow: on-demand only
 
-        size_t len = vconsole_get_lines(rows, buf, MUX_LINE_BUF);
-        if (len > 0) {
-            s_drivers[i].ops->render(buf, len);
-        }
+        render_slot(d, buf);
     }
     xSemaphoreGive(s_lock);
 
     heap_caps_free(buf);
+}
+
+// On-demand refresh: push the current console to one named display, or to all
+// active displays when name is NULL. Used for slow displays that are not part
+// of the automatic mirror pass.
+esp_err_t display_mux_refresh(const char *name)
+{
+    char *buf = heap_caps_malloc(MUX_LINE_BUF, MALLOC_CAP_SPIRAM);
+    if (!buf) return ESP_ERR_NO_MEM;
+
+    esp_err_t ret = name ? ESP_ERR_NOT_FOUND : ESP_OK;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    for (int i = 0; i < DISPLAY_MUX_MAX_DRIVERS; i++) {
+        display_slot_t *d = &s_drivers[i];
+        if (!d->active) continue;
+        if (name && strcmp(d->name, name) != 0) continue;
+
+        render_slot(d, buf);
+        ret = ESP_OK;
+    }
+    xSemaphoreGive(s_lock);
+
+    heap_caps_free(buf);
+    return ret;
 }
 
 static void display_mux_task(void *arg)
@@ -189,6 +227,20 @@ const display_slot_t *display_mux_get(int index)
 
 static int cmd_display(int argc, char **argv)
 {
+    // `display refresh [name]` — push the current console to a slow (on-demand)
+    // display such as e-ink, or to all displays when no name is given.
+    if (argc >= 2 && strcmp(argv[1], "refresh") == 0) {
+        const char *name = (argc >= 3) ? argv[2] : NULL;
+        esp_err_t err = display_mux_refresh(name);
+        if (err == ESP_ERR_NOT_FOUND)
+            vconsole_printf("No display named '%s'\n", argv[2]);
+        else if (err != ESP_OK)
+            vconsole_printf("Refresh failed: %s\n", esp_err_to_name(err));
+        else
+            vconsole_printf("Refreshed %s\n", name ? name : "all displays");
+        return 0;
+    }
+
     int count = display_mux_count();
     if (count == 0) {
         vconsole_printf("No display drivers registered\n");
@@ -219,7 +271,7 @@ esp_err_t cmd_display_register(void)
 {
     const esp_console_cmd_t cmd = {
         .command = "display",
-        .help = "List registered display drivers",
+        .help = "Displays: 'display' lists, 'display refresh [name]' redraws slow (e-ink) displays",
         .func = cmd_display,
     };
     return esp_console_cmd_register(&cmd);

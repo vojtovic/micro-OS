@@ -4,7 +4,6 @@
 #include "services/mem_pool.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
-#include "esp_task_wdt.h"
 #include "mbedtls/sha256.h"
 #include <string.h>
 #include <stdio.h>
@@ -135,7 +134,6 @@ esp_err_t module_mgr_load(const char *elf_path)
 
     esp_err_t err = elf_loader_load(elf_path, &mod->elf);
     if (err != ESP_OK) return err;
-    esp_task_wdt_reset();
 
     s_pending_exports = NULL;
     int ret = elf_loader_call_entry(&mod->elf, 0, NULL);
@@ -229,7 +227,9 @@ esp_err_t module_mgr_start(const char *name)
     }
 
     int ret;
-    esp_err_t guard_err = fault_guard_call(mod->exports->start, &ret);
+    // start() legitimately allocates persistent state (framebuffers, etc.),
+    // so a heap increase is expected — don't flag it as a leak.
+    esp_err_t guard_err = fault_guard_call(mod->exports->start, &ret, false);
     if (guard_err != ESP_OK || ret != 0) {
         ESP_LOGE(TAG, "'%s' start() failed (guard=%s, ret=%d) — auto-unloading",
                  name, esp_err_to_name(guard_err), ret);
@@ -257,7 +257,8 @@ esp_err_t module_mgr_stop(const char *name)
 
     if (mod->exports->stop) {
         int ret;
-        esp_err_t guard_err = fault_guard_call(mod->exports->stop, &ret);
+        // stop() should free what it allocated — flag a net PSRAM increase.
+        esp_err_t guard_err = fault_guard_call(mod->exports->stop, &ret, true);
         if (guard_err != ESP_OK)
             ESP_LOGW(TAG, "'%s' stop() guard failed: %s", name, esp_err_to_name(guard_err));
         else if (ret != 0)
