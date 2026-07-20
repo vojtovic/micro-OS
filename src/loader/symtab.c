@@ -6,6 +6,7 @@
 #include "kernel_abi.h"
 #include "services/vconsole.h"
 #include "services/registry.h"
+#include "services/input.h"
 #include "services/dma_service.h"
 #include "bus/bus_manager.h"
 #include "services/display_mux.h"
@@ -82,6 +83,15 @@ static const struct esp_elfsym s_symtab[] = {
     ESP_ELFSYM_EXPORT(gfx_font_get),
     ESP_ELFSYM_EXPORT(gfx_draw_char),
     ESP_ELFSYM_EXPORT(gfx_draw_text),
+
+    /* Input service — for input-source drivers (CardKB) */
+    ESP_ELFSYM_EXPORT(input_push_key),
+    ESP_ELFSYM_EXPORT(input_get_key),
+
+    /* I2C bus access — for input-source drivers (CardKB at 0x5F) */
+    ESP_ELFSYM_EXPORT(bus_i2c_read),
+    ESP_ELFSYM_EXPORT(bus_i2c_write),
+
     ESP_ELFSYM_EXPORT(cache_flush_range),
     ESP_ELFSYM_EXPORT(cache_invalidate_range),
     ESP_ELFSYM_EXPORT(dma_buf_alloc),

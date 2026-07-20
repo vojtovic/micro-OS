@@ -9,6 +9,7 @@
 #include "loader/symtab.h"
 #include "loader/module_mgr.h"
 #include "services/display_mux.h"
+#include "services/input.h"
 #include "services/wifi.h"
 #include "services/pkg_manager.h"
 #include "services/mem_pool.h"
@@ -99,6 +100,11 @@ void app_main(void)
         registry_add("vconsole", 1, (void *)vconsole_get_ops(), NULL);
     if (sd_err == ESP_OK)
         registry_add("storage", 1, (void *)storage_sd_get_ops(), NULL);
+
+    // Input service — key-event queue for input sources (CardKB) and consumers
+    esp_err_t input_err = input_init();
+    if (input_err != ESP_OK)
+        ESP_LOGW(TAG, "input service init failed — keyboard input unavailable");
 
     // Kernel symbol table — enables ELF modules to resolve kernel functions
     ESP_ERROR_CHECK(symtab_init());

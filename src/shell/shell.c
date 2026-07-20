@@ -5,6 +5,7 @@
 #include "shell/cmd_module.h"
 #include "shell/cmd_bench.h"
 #include "services/display_mux.h"
+#include "services/input.h"
 #include "services/wifi.h"
 #include "services/pkg_manager.h"
 #include "services/mem_pool.h"
@@ -328,6 +329,10 @@ esp_err_t shell_init(void)
     ret = cmd_bench_register();
     if (ret != ESP_OK) return ret;
 
+    // Input service diagnostic command (input push|read|status)
+    ret = cmd_input_register();
+    if (ret != ESP_OK) return ret;
+
     // Config parser command
     ret = cmd_config_register();
     if (ret != ESP_OK) return ret;
@@ -370,10 +375,15 @@ static int shell_read_line(char *buf, size_t buf_size)
 
     int i = 0;
     while (i < (int)buf_size - 1) {
-        int c = getchar();
-        if (c == EOF) {
-            vTaskDelay(pdMS_TO_TICKS(50));
-            continue;
+        // Read from the input service (CardKB etc.) first, waiting briefly;
+        // fall back to the UART console. This is the poll delay too.
+        int c = input_get_key(20);
+        if (c < 0) {
+            c = getchar();
+            if (c == EOF) {
+                vTaskDelay(pdMS_TO_TICKS(30));
+                continue;
+            }
         }
         if (c == '\n' || c == '\r') {
             vconsole_putchar('\n');

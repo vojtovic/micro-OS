@@ -17,6 +17,11 @@ esp_err_t bus_spi_add_device(spi_host_device_t host,
 esp_err_t bus_spi_lock(spi_device_handle_t handle);
 void      bus_spi_unlock(spi_device_handle_t handle);
 
+// I2C (I2C_NUM_0) read/write helpers — exported to modules so input-source
+// drivers (e.g. CardKB at 0x5F) can talk to the kernel I2C bus.
+esp_err_t bus_i2c_read (uint8_t addr, uint8_t *data, size_t len);
+esp_err_t bus_i2c_write(uint8_t addr, const uint8_t *data, size_t len);
+
 const hal_bus_ops_t *bus_get_ops(void);
 
 #endif

@@ -73,6 +73,20 @@ void bus_spi_unlock(spi_device_handle_t handle)
     spi_device_release_bus(handle);
 }
 
+esp_err_t bus_i2c_read(uint8_t addr, uint8_t *data, size_t len)
+{
+    if (!data || len == 0) return ESP_ERR_INVALID_ARG;
+    return i2c_master_read_from_device(I2C_NUM_0, addr, data, len,
+                                       pdMS_TO_TICKS(100));
+}
+
+esp_err_t bus_i2c_write(uint8_t addr, const uint8_t *data, size_t len)
+{
+    if (!data || len == 0) return ESP_ERR_INVALID_ARG;
+    return i2c_master_write_to_device(I2C_NUM_0, addr, data, len,
+                                      pdMS_TO_TICKS(100));
+}
+
 static const hal_bus_ops_t s_bus_ops = {
     .spi_init       = bus_spi_init,
     .spi_add_device = bus_spi_add_device,
