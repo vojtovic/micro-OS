@@ -20,6 +20,11 @@ int input_push_key(int key);
 // key code (>=0), or -1 if none arrived within the timeout.
 int input_get_key(uint32_t timeout_ms);
 
+// Discard all queued keys. Called before launching an app so the keystroke
+// that launched it (e.g. the Enter after typing its name) does not leak into
+// the app's own input loop.
+void input_flush(void);
+
 // Registers the `input` diagnostic shell command (push/read/status).
 esp_err_t cmd_input_register(void);
 

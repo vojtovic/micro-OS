@@ -4,13 +4,31 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/task.h"
 #include <string.h>
+#include <stdio.h>
 
 static const char *TAG = "input";
 
 #define INPUT_QUEUE_DEPTH 32
 
 static QueueHandle_t s_queue = NULL;
+
+// Bridge the UART console (stdin) into the input service, so keys typed in the
+// serial monitor reach apps too — not just the CardKB. Both sources push here,
+// so the shell and apps read a single unified stream via input_get_key().
+static void uart_bridge_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        int c = getchar();
+        if (c == EOF) {
+            vTaskDelay(pdMS_TO_TICKS(10));   // stdin is non-blocking → poll
+            continue;
+        }
+        input_push_key(c);
+    }
+}
 
 esp_err_t input_init(void)
 {
@@ -19,7 +37,11 @@ esp_err_t input_init(void)
         ESP_LOGE(TAG, "Failed to create input queue");
         return ESP_ERR_NO_MEM;
     }
-    ESP_LOGI(TAG, "Input service ready (queue depth %d)", INPUT_QUEUE_DEPTH);
+
+    xTaskCreate(uart_bridge_task, "uart_in", 3072, NULL, 3, NULL);
+
+    ESP_LOGI(TAG, "Input service ready (queue depth %d, UART bridged)",
+             INPUT_QUEUE_DEPTH);
     return ESP_OK;
 }
 
@@ -36,6 +58,11 @@ int input_get_key(uint32_t timeout_ms)
     if (xQueueReceive(s_queue, &key, pdMS_TO_TICKS(timeout_ms)) == pdTRUE)
         return key;
     return -1;
+}
+
+void input_flush(void)
+{
+    if (s_queue) xQueueReset(s_queue);
 }
 
 // input <push <text> | read | status> — exercises the service without hardware.

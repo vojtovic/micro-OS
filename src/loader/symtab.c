@@ -7,6 +7,7 @@
 #include "services/vconsole.h"
 #include "services/registry.h"
 #include "services/input.h"
+#include "services/app.h"
 #include "services/dma_service.h"
 #include "bus/bus_manager.h"
 #include "services/display_mux.h"
@@ -42,6 +43,9 @@ static BaseType_t wrap_xSemaphoreGive(SemaphoreHandle_t sem)
 static const struct esp_elfsym s_symtab[] = {
     ESP_ELFSYM_EXPORT(display_mux_register),
     ESP_ELFSYM_EXPORT(display_mux_unregister),
+    ESP_ELFSYM_EXPORT(display_mux_present),
+    ESP_ELFSYM_EXPORT(display_mux_grab),
+    ESP_ELFSYM_EXPORT(display_mux_release),
     ESP_ELFSYM_EXPORT(gpio_config),
     ESP_ELFSYM_EXPORT(gpio_get_level),
     ESP_ELFSYM_EXPORT(gpio_set_level),
@@ -88,9 +92,19 @@ static const struct esp_elfsym s_symtab[] = {
     ESP_ELFSYM_EXPORT(input_push_key),
     ESP_ELFSYM_EXPORT(input_get_key),
 
+    /* App runtime — for a launcher app that browses/runs other apps */
+    ESP_ELFSYM_EXPORT(app_run),
+    ESP_ELFSYM_EXPORT(app_list),
+    ESP_ELFSYM_EXPORT(app_read_file),
+    ESP_ELFSYM_EXPORT(app_write_file),
+
     /* I2C bus access — for input-source drivers (CardKB at 0x5F) */
     ESP_ELFSYM_EXPORT(bus_i2c_read),
     ESP_ELFSYM_EXPORT(bus_i2c_write),
+
+    /* Display SPI (hardware SPI2 + DMA) — for display driver modules */
+    ESP_ELFSYM_EXPORT(disp_spi_add),
+    ESP_ELFSYM_EXPORT(disp_spi_write),
 
     ESP_ELFSYM_EXPORT(cache_flush_range),
     ESP_ELFSYM_EXPORT(cache_invalidate_range),

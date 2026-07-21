@@ -12,6 +12,7 @@ typedef struct {
     char                       name[DISPLAY_NAME_LEN];
     const display_driver_ops_t *ops;
     bool                       active;
+    bool                       grabbed;   // owned by a GUI app — no console mirror
 } display_slot_t;
 
 esp_err_t display_mux_init(void);
@@ -23,6 +24,17 @@ const display_slot_t *display_mux_get(int index);
 // Push the current console to one named display (NULL = all active displays).
 // For slow, on-demand displays (e-ink) that are not auto-mirrored live.
 esp_err_t display_mux_refresh(const char *name);
+
+// Present an arbitrary framebuffer to a named display (GUI path). Returns
+// ESP_ERR_NOT_FOUND if no such display, ESP_ERR_NOT_SUPPORTED if the driver
+// has no present op.
+esp_err_t display_mux_present(const char *name, const struct gfx_fb *fb);
+
+// Grab/release a display for exclusive GUI use — while grabbed, the console
+// auto-mirror skips it, so a graphical app owns the screen. Release restores
+// normal console mirroring.
+esp_err_t display_mux_grab(const char *name);
+esp_err_t display_mux_release(const char *name);
 
 esp_err_t cmd_display_register(void);
 

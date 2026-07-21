@@ -3,6 +3,7 @@
 #include "hal/storage.h"
 #include "hal/internal_fs.h"
 #include "services/vconsole.h"
+#include "services/app.h"
 #include "esp_console.h"
 #include "esp_log.h"
 #include "driver/gpio.h"
@@ -78,12 +79,18 @@ esp_err_t init_filesystem(void)
     ensure_file("/sdcard/etc/hostname", "micro_arch\n");
 
     ensure_file("/sdcard/etc/init.conf",
-        "# Boot script — executed line-by-line on startup\n"
-        "# Each line is a shell command\n"
+        "# init.conf — boot script, executed line-by-line on startup.\n"
         "#\n"
-        "# Example:\n"
-        "# echo Welcome to micro_arch\n"
-        "# mount\n"
+        "# Each non-comment line is run like a shell prompt: first a built-in\n"
+        "# command is tried, then an app/driver from /sdcard/bin/<name>.elf.\n"
+        "# This is the Arch-style \"what starts at boot\" file.\n"
+        "#\n"
+        "# Examples — uncomment to enable:\n"
+        "#\n"
+        "# echo Welcome to micro_arch      # print a banner\n"
+        "# oled                            # load the OLED display driver\n"
+        "# cardkb                          # load the CardKB keyboard driver\n"
+        "# gfxdemo                         # launch the graphics demo\n"
     );
 
     if (first_boot) {
@@ -116,7 +123,17 @@ esp_err_t init_run_bootscript(void)
         int ret;
         esp_err_t err = esp_console_run(line, &ret);
         if (err == ESP_ERR_NOT_FOUND) {
-            ESP_LOGW(TAG, "Unknown command: %s", line);
+            // Not a built-in — try to run it as an app/driver from
+            // /sdcard/bin/<name>.elf, exactly like the shell does. This lets
+            // init.conf autostart modules (e.g. "oled", "cardkb", "gfxdemo")
+            // — Arch-style "what starts at boot".
+            char split[256];
+            strncpy(split, line, sizeof(split) - 1);
+            split[sizeof(split) - 1] = '\0';
+            char *argv[16];
+            int argc = esp_console_split_argv(split, argv, 16);
+            if (argc <= 0 || app_run(argv[0], argc, argv) == APP_NOT_FOUND)
+                ESP_LOGW(TAG, "Unknown command: %s", line);
         } else if (err != ESP_OK && err != ESP_ERR_INVALID_ARG) {
             ESP_LOGW(TAG, "Command failed: %s (%s)", line, esp_err_to_name(err));
         }

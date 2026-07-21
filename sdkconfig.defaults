@@ -50,3 +50,12 @@ CONFIG_FATFS_API_ENCODING_UTF_8=y
 # docs/2026-07-20-elf-loader-psram-rodata-fix.md. Fallback if hardware
 # testing ever regresses: set CONFIG_ELF_LOADER_LOAD_PSRAM=n.
 CONFIG_ELF_LOADER_LOAD_PSRAM=y
+
+# ---- Performance: run the ESP32-S3 at full speed ----
+# CPU 160 -> 240 MHz (the S3's rated max) — biggest single CPU speedup.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
+# Compiler: Debug (-Og) -> Performance (-O2) — faster code across the firmware.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+# Flash: DIO -> QIO (4 data lines) @ 80 MHz — faster code fetch from flash.
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y

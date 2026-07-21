@@ -16,7 +16,7 @@ STRIP_FLAGS = --strip-unneeded \
               --remove-section=.xt.prop \
               --remove-section=.xtensa.info
 
-MODULES = hello badabi oled eink cardkb
+MODULES = hello badabi oled eink cardkb demo launcher edit gfxdemo
 
 .PHONY: all clean
 

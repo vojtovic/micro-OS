@@ -1,5 +1,6 @@
 #include "display_mux.h"
 #include "vconsole.h"
+#include "loader/gfx_abi.h"   // gfx_fb_alloc/draw for the `display draw` test
 #include "esp_console.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -69,7 +70,7 @@ static void render_all(void)
     xSemaphoreTake(s_lock, portMAX_DELAY);
     for (int i = 0; i < DISPLAY_MUX_MAX_DRIVERS; i++) {
         display_slot_t *d = &s_drivers[i];
-        if (!d->active) continue;
+        if (!d->active || d->grabbed) continue;   // grabbed = owned by a GUI app
 
         uint32_t caps = d->ops->get_caps ? d->ops->get_caps() : 0;
         if (!(caps & DISPLAY_CAP_FAST_REFRESH)) continue;   // slow: on-demand only
@@ -104,6 +105,40 @@ esp_err_t display_mux_refresh(const char *name)
     heap_caps_free(buf);
     return ret;
 }
+
+esp_err_t display_mux_present(const char *name, const struct gfx_fb *fb)
+{
+    if (!name || !fb) return ESP_ERR_INVALID_ARG;
+
+    esp_err_t ret;
+    // Hold the lock across present() for the same reason as render_all: the
+    // driver must not be unregistered/freed mid-call.
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    display_slot_t *d = find_name(name);
+    if (!d) {
+        ret = ESP_ERR_NOT_FOUND;
+    } else if (!d->ops->present) {
+        ret = ESP_ERR_NOT_SUPPORTED;
+    } else {
+        ret = (d->ops->present(fb) == 0) ? ESP_OK : ESP_FAIL;
+    }
+    xSemaphoreGive(s_lock);
+    return ret;
+}
+
+static esp_err_t set_grabbed(const char *name, bool grabbed)
+{
+    if (!name) return ESP_ERR_INVALID_ARG;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    display_slot_t *d = find_name(name);
+    esp_err_t ret = ESP_ERR_NOT_FOUND;
+    if (d) { d->grabbed = grabbed; ret = ESP_OK; }
+    xSemaphoreGive(s_lock);
+    return ret;
+}
+
+esp_err_t display_mux_grab(const char *name)    { return set_grabbed(name, true);  }
+esp_err_t display_mux_release(const char *name) { return set_grabbed(name, false); }
 
 static void display_mux_task(void *arg)
 {
@@ -241,6 +276,41 @@ static int cmd_display(int argc, char **argv)
         return 0;
     }
 
+    // `display draw <name> [text]` — render a test image (border + text) into a
+    // gfx framebuffer and present it, exercising the GUI present path.
+    if (argc >= 3 && strcmp(argv[1], "draw") == 0) {
+        const char *name = argv[2];
+        const char *text = (argc >= 4) ? argv[3] : "PRESENT OK";
+
+        const display_slot_t *d = find_name(name);
+        if (!d) { vconsole_printf("No display named '%s'\n", name); return 0; }
+
+        int cols = d->ops->get_cols ? d->ops->get_cols() : 16;
+        int rows = d->ops->get_rows ? d->ops->get_rows() : 8;
+        int w = cols * 6, h = rows * 8;
+
+        gfx_fb_t *fb = gfx_fb_alloc((uint16_t)w, (uint16_t)h, GFX_FMT_MONO_VLSB, 0);
+        if (!fb) { vconsole_printf("draw: alloc failed (%dx%d)\n", w, h); return 0; }
+
+        gfx_fill_rect(fb, 0, 0, w, h, 0);
+        gfx_fill_rect(fb, 0, 0, w, 1, 1);          // border
+        gfx_fill_rect(fb, 0, h - 1, w, 1, 1);
+        gfx_fill_rect(fb, 0, 0, 1, h, 1);
+        gfx_fill_rect(fb, w - 1, 0, 1, h, 1);
+        gfx_draw_text(fb, 3, 2, text, gfx_font_get("5x7"), 1);
+
+        esp_err_t err = display_mux_present(name, fb);
+        gfx_fb_free(fb);
+
+        if (err == ESP_ERR_NOT_SUPPORTED)
+            vconsole_printf("'%s' has no present() (GUI) support\n", name);
+        else if (err != ESP_OK)
+            vconsole_printf("draw failed: %s\n", esp_err_to_name(err));
+        else
+            vconsole_printf("Drew \"%s\" to %s (%dx%d)\n", text, name, w, h);
+        return 0;
+    }
+
     int count = display_mux_count();
     if (count == 0) {
         vconsole_printf("No display drivers registered\n");
@@ -271,7 +341,7 @@ esp_err_t cmd_display_register(void)
 {
     const esp_console_cmd_t cmd = {
         .command = "display",
-        .help = "Displays: 'display' lists, 'display refresh [name]' redraws slow (e-ink) displays",
+        .help = "Displays: 'display' lists | 'display refresh [name]' | 'display draw <name> [text]'",
         .func = cmd_display,
     };
     return esp_console_cmd_register(&cmd);

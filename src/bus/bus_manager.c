@@ -2,8 +2,24 @@
 #include "config/pin_config.h"
 #include "driver/i2c.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include <string.h>
 
 static const char *TAG = "bus";
+
+// ---- Display SPI (hardware SPI2 + DMA), replaces per-module bit-banging -----
+// The display bus (SPI2) is shared by OLED + e-ink. Pins are module-owned
+// (architecture: modules read pin config), so disp_spi_add() takes them and
+// lazily initialises the bus on first use. CS/DC stay module-managed via GPIO
+// (spics_io_num=-1), so a driver can hold CS across a whole command+data burst.
+#define DISPLAY_SPI_HOST   SPI2_HOST
+#define DISP_SPI_CHUNK     4096
+
+static bool             s_disp_bus_ready = false;
+static uint8_t         *s_disp_bounce = NULL;   // internal DMA-capable bounce
+static SemaphoreHandle_t s_disp_lock = NULL;
 
 esp_err_t bus_spi_init(spi_host_device_t host, int mosi, int miso,
                        int clk, int max_transfer)
@@ -85,6 +101,67 @@ esp_err_t bus_i2c_write(uint8_t addr, const uint8_t *data, size_t len)
     if (!data || len == 0) return ESP_ERR_INVALID_ARG;
     return i2c_master_write_to_device(I2C_NUM_0, addr, data, len,
                                       pdMS_TO_TICKS(100));
+}
+
+esp_err_t disp_spi_add(int clk, int mosi, int clk_hz, void **out_handle)
+{
+    if (!out_handle) return ESP_ERR_INVALID_ARG;
+
+    if (!s_disp_bus_ready) {
+        esp_err_t ret = bus_spi_init(DISPLAY_SPI_HOST, mosi, -1, clk, DISP_SPI_CHUNK);
+        if (ret != ESP_OK) return ret;
+
+        s_disp_bounce = heap_caps_malloc(DISP_SPI_CHUNK,
+                                         MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+        s_disp_lock = xSemaphoreCreateMutex();
+        if (!s_disp_bounce || !s_disp_lock) {
+            ESP_LOGE(TAG, "display SPI bounce/lock alloc failed");
+            return ESP_ERR_NO_MEM;
+        }
+        s_disp_bus_ready = true;
+        ESP_LOGI(TAG, "Display SPI ready (SPI2, CLK=%d MOSI=%d)", clk, mosi);
+    }
+
+    // No hardware CS: the driver toggles CS/DC via GPIO, so it can hold CS low
+    // across a whole command+data burst.
+    spi_device_interface_config_t dev = {
+        .clock_speed_hz = clk_hz,
+        .mode           = 0,
+        .spics_io_num   = -1,
+        .queue_size     = 1,
+    };
+    spi_device_handle_t h;
+    esp_err_t ret = spi_bus_add_device(DISPLAY_SPI_HOST, &dev, &h);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "display SPI add device failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    *out_handle = h;
+    return ESP_OK;
+}
+
+esp_err_t disp_spi_write(void *handle, const uint8_t *data, size_t len)
+{
+    if (!handle || !data || len == 0) return ESP_ERR_INVALID_ARG;
+    if (!s_disp_bounce) return ESP_ERR_INVALID_STATE;
+
+    spi_device_handle_t h = (spi_device_handle_t)handle;
+    esp_err_t ret = ESP_OK;
+
+    // Copy through an internal DMA-capable bounce buffer in chunks — robust for
+    // PSRAM-resident framebuffers without relying on SPI-DMA-from-PSRAM.
+    xSemaphoreTake(s_disp_lock, portMAX_DELAY);
+    for (size_t off = 0; off < len && ret == ESP_OK; ) {
+        size_t n = len - off;
+        if (n > DISP_SPI_CHUNK) n = DISP_SPI_CHUNK;
+        memcpy(s_disp_bounce, data + off, n);
+
+        spi_transaction_t t = { .length = n * 8, .tx_buffer = s_disp_bounce };
+        ret = spi_device_transmit(h, &t);
+        off += n;
+    }
+    xSemaphoreGive(s_disp_lock);
+    return ret;
 }
 
 static const hal_bus_ops_t s_bus_ops = {

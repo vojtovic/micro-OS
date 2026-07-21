@@ -26,6 +26,11 @@ extern void  heap_caps_free(void *ptr);
 extern int   gpio_set_level(int gpio, uint32_t level);
 extern int   gpio_get_level(int gpio);
 extern int   gpio_config(const void *cfg);
+// Hardware display SPI (SPI2 + DMA) — replaces bit-banging.
+extern int   disp_spi_add(int clk, int mosi, int clk_hz, void **out_handle);
+extern int   disp_spi_write(void *handle, const uint8_t *data, size_t len);
+
+#define EINK_SPI_HZ  (10 * 1000 * 1000)   // 10 MHz
 extern void  vTaskDelay(uint32_t ticks);   // CONFIG_FREERTOS_HZ=1000 → ticks == ms
 
 #define MALLOC_CAP_SPIRAM  (1 << 10)
@@ -48,6 +53,7 @@ extern void  vTaskDelay(uint32_t ticks);   // CONFIG_FREERTOS_HZ=1000 → ticks 
 
 static uint8_t *s_framebuf;   // current frame (0xFF = white)
 static uint8_t *s_oldbuf;     // last frame pushed to the panel (change detection)
+static void    *s_spi;        // hardware SPI device handle
 
 #define EPD_STRIDE  (EPD_WIDTH / 8)   // 30 bytes per row
 
@@ -84,17 +90,13 @@ static const uint8_t lut_R23_DU[42] = { 0x01,0x4f,0x01,0x00,0x00,0x01,0x01 };
 static const uint8_t lut_R24_DU[42] = { 0x01,0x0f,0x01,0x00,0x00,0x01,0x01 };
 
 // ---------------------------------------------------------------------------
-// Low-level SPI (bit-bang, mode 0, MSB first) and control lines
+// Low-level SPI (hardware SPI2 + DMA) and control lines
 // ---------------------------------------------------------------------------
 static void epd_gpio_init(void)
 {
-    // gpio_config_t in ESP-IDF v5.x is 24 bytes (uint64 pin_mask + 4 enums);
-    // use 8 uint32_t = 32 bytes so intr_type (offset 20) is in-bounds/zeroed.
-    // CLK and MOSI MUST be in the output set — the bit-bang SPI drives them,
-    // so a standalone eink (no oled loaded first) needs them as outputs.
-    uint64_t out_mask = (1ULL << PIN_CS)  | (1ULL << PIN_DC)  |
-                        (1ULL << PIN_RST) | (1ULL << PIN_CLK) |
-                        (1ULL << PIN_MOSI);
+    // Only CS/DC/RST are GPIO outputs; CLK/MOSI are driven by the hardware SPI
+    // peripheral (claimed by disp_spi_add). BUSY is an input.
+    uint64_t out_mask = (1ULL << PIN_CS) | (1ULL << PIN_DC) | (1ULL << PIN_RST);
     uint32_t out_cfg[8];
     memset(out_cfg, 0, sizeof(out_cfg));
     out_cfg[0] = out_mask & 0xFFFFFFFF;    // pin_bit_mask low 32
@@ -115,27 +117,26 @@ static void epd_gpio_init(void)
     gpio_set_level(PIN_RST, 1);
 }
 
-static void epd_spi_write_byte(uint8_t data)
-{
-    gpio_set_level(PIN_CS, 0);
-    for (int i = 7; i >= 0; i--) {
-        gpio_set_level(PIN_CLK, 0);
-        gpio_set_level(PIN_MOSI, (data >> i) & 1);
-        gpio_set_level(PIN_CLK, 1);
-    }
-    gpio_set_level(PIN_CS, 1);
-}
-
 static void epd_cmd(uint8_t cmd)
 {
     gpio_set_level(PIN_DC, 0);
-    epd_spi_write_byte(cmd);
+    gpio_set_level(PIN_CS, 0);
+    disp_spi_write(s_spi, &cmd, 1);
+    gpio_set_level(PIN_CS, 1);
+}
+
+// Send a data buffer (DC high) in one hardware-SPI (DMA) transfer.
+static void epd_data_buf(const uint8_t *data, size_t len)
+{
+    gpio_set_level(PIN_DC, 1);
+    gpio_set_level(PIN_CS, 0);
+    disp_spi_write(s_spi, data, len);
+    gpio_set_level(PIN_CS, 1);
 }
 
 static void epd_data(uint8_t data)
 {
-    gpio_set_level(PIN_DC, 1);
-    epd_spi_write_byte(data);
+    epd_data_buf(&data, 1);
 }
 
 // BUSY is HIGH while the panel is busy (matches the proven mono driver).
@@ -209,22 +210,20 @@ static void epd_init(void)
 
 static void epd_lut_gc(void)
 {
-    int i;
-    epd_cmd(0x20);  for (i = 0; i < 56; i++) epd_data(lut_R20_GC[i]);
-    epd_cmd(0x21);  for (i = 0; i < 42; i++) epd_data(lut_R21_GC[i]);
-    epd_cmd(0x24);  for (i = 0; i < 42; i++) epd_data(lut_R24_GC[i]);
-    epd_cmd(0x22);  for (i = 0; i < 56; i++) epd_data(lut_R22_GC[i]);
-    epd_cmd(0x23);  for (i = 0; i < 42; i++) epd_data(lut_R23_GC[i]);
+    epd_cmd(0x20);  epd_data_buf(lut_R20_GC, 56);
+    epd_cmd(0x21);  epd_data_buf(lut_R21_GC, 42);
+    epd_cmd(0x24);  epd_data_buf(lut_R24_GC, 42);
+    epd_cmd(0x22);  epd_data_buf(lut_R22_GC, 56);
+    epd_cmd(0x23);  epd_data_buf(lut_R23_GC, 42);
 }
 
 static void epd_lut_du(void)
 {
-    int i;
-    epd_cmd(0x20);  for (i = 0; i < 56; i++) epd_data(lut_R20_DU[i]);
-    epd_cmd(0x21);  for (i = 0; i < 42; i++) epd_data(lut_R21_DU[i]);
-    epd_cmd(0x24);  for (i = 0; i < 42; i++) epd_data(lut_R24_DU[i]);
-    epd_cmd(0x22);  for (i = 0; i < 56; i++) epd_data(lut_R22_DU[i]);
-    epd_cmd(0x23);  for (i = 0; i < 42; i++) epd_data(lut_R23_DU[i]);
+    epd_cmd(0x20);  epd_data_buf(lut_R20_DU, 56);
+    epd_cmd(0x21);  epd_data_buf(lut_R21_DU, 42);
+    epd_cmd(0x24);  epd_data_buf(lut_R24_DU, 42);
+    epd_cmd(0x22);  epd_data_buf(lut_R22_DU, 56);
+    epd_cmd(0x23);  epd_data_buf(lut_R23_DU, 42);
 }
 
 static void epd_refresh(void)
@@ -239,9 +238,8 @@ static void epd_refresh(void)
 // full=false → DU (fast/partial, ~0.3s, accumulates ghosting).
 static void epd_update(const uint8_t *buf, bool full)
 {
-    epd_cmd(0x13);                          // transfer new data
-    for (int i = 0; i < EPD_BUF_SIZE; i++)
-        epd_data(buf[i]);
+    epd_cmd(0x13);                          // transfer new data (one DMA burst)
+    epd_data_buf(buf, EPD_BUF_SIZE);
     if (full) epd_lut_gc();
     else      epd_lut_du();
     epd_refresh();
@@ -265,10 +263,9 @@ static void epd_update_partial(const uint8_t *buf, int y0, int y1)
     epd_data((y1 >> 8) & 0x01);             // VRED[8]
     epd_data(y1 & 0xFF);                    // VRED[7:0]
 
-    epd_cmd(0x13);                          // new data — window rows only
-    for (int y = y0; y <= y1; y++)
-        for (int b = 0; b < EPD_STRIDE; b++)
-            epd_data(buf[y * EPD_STRIDE + b]);
+    // new data — window rows only (contiguous, one DMA burst)
+    epd_cmd(0x13);
+    epd_data_buf(&buf[y0 * EPD_STRIDE], (size_t)(y1 - y0 + 1) * EPD_STRIDE);
 
     epd_lut_du();
     epd_refresh();
@@ -503,6 +500,14 @@ static int eink_start(void)
     // Force the first render to differ from s_oldbuf so it always draws.
     memset(s_oldbuf, 0x00, EPD_BUF_SIZE);
 
+    // Claim the shared display SPI bus (SPI2 + DMA) and add our device.
+    if (disp_spi_add(PIN_CLK, PIN_MOSI, EINK_SPI_HZ, &s_spi) != 0) {
+        vconsole_printf("[eink] display SPI init failed\n");
+        heap_caps_free(s_framebuf); heap_caps_free(s_oldbuf);
+        s_framebuf = NULL; s_oldbuf = NULL;
+        return -1;
+    }
+
     epd_gpio_init();
     epd_init();
     eink_clear();
@@ -531,7 +536,7 @@ static module_info_t info = {
     .magic       = MODULE_MAGIC,
     .abi_version = MODULE_ABI_VERSION,
     .name        = "eink",
-    .version     = "2.2.0",
+    .version     = "2.3.0",
     .requires    = "vconsole",
     .flags       = 0,
 };

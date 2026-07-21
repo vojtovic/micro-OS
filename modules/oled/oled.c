@@ -14,6 +14,11 @@ extern void  heap_caps_free(void *ptr);
 extern int   gpio_set_level(int gpio, uint32_t level);
 extern int   gpio_config(const void *cfg);
 extern int   snprintf(char *str, size_t size, const char *fmt, ...);
+// Hardware display SPI (SPI2 + DMA) — replaces bit-banging.
+extern int   disp_spi_add(int clk, int mosi, int clk_hz, void **out_handle);
+extern int   disp_spi_write(void *handle, const uint8_t *data, size_t len);
+
+#define OLED_SPI_HZ  (10 * 1000 * 1000)   // 10 MHz
 
 #define MALLOC_CAP_SPIRAM  (1 << 10)
 
@@ -33,55 +38,47 @@ extern int   snprintf(char *str, size_t size, const char *fmt, ...);
 static uint8_t          *s_framebuf;   // == s_fb->pixels (raw bytes for SH1106 flush)
 static gfx_fb_t         *s_fb;          // kernel framebuffer (MONO_VLSB, SH1106 native)
 static const gfx_font_t *s_font;        // kernel 5x7 font
+static void             *s_spi;         // hardware SPI device handle
 
 static void oled_gpio_init(void)
 {
-    // Include CLK and MOSI in the output config — bit-bang SPI needs them
-    // as outputs. gpio_config_t in ESP-IDF v5.x is 24 bytes (uint64 pin_mask
-    // + 4 enums); use 8 uint32_t = 32 bytes to be safe across versions.
-    uint64_t pin_mask = (1ULL << PIN_CS)  | (1ULL << PIN_DC) |
-                        (1ULL << PIN_RST) | (1ULL << PIN_CLK) |
-                        (1ULL << PIN_MOSI);
+    // Only CS/DC/RST are GPIO — CLK/MOSI are driven by the hardware SPI
+    // peripheral (claimed by disp_spi_add), so they must NOT be configured
+    // here. gpio_config_t in ESP-IDF v5.x is 24 bytes; use 8 uint32_t.
+    uint64_t pin_mask = (1ULL << PIN_CS) | (1ULL << PIN_DC) | (1ULL << PIN_RST);
     uint32_t cfg[8];
     memset(cfg, 0, sizeof(cfg));
     cfg[0] = pin_mask & 0xFFFFFFFF;       // pin_bit_mask low 32
     cfg[1] = pin_mask >> 32;               // pin_bit_mask high 32
     cfg[2] = 2;                            // mode = GPIO_MODE_OUTPUT
-    cfg[3] = 0;                            // pull_up_en = disable
-    cfg[4] = 0;                            // pull_down_en = disable
-    cfg[5] = 0;                            // intr_type = GPIO_INTR_DISABLE
-    cfg[6] = 0;
-    cfg[7] = 0;
-
     gpio_config(cfg);
+
     gpio_set_level(PIN_CS,  1);
     gpio_set_level(PIN_DC,  0);
     gpio_set_level(PIN_RST, 1);
-    gpio_set_level(PIN_CLK,  0);
-    gpio_set_level(PIN_MOSI, 0);
 }
 
-static void oled_spi_write_byte(uint8_t data)
-{
-    gpio_set_level(PIN_CS, 0);
-    for (int i = 7; i >= 0; i--) {
-        gpio_set_level(PIN_CLK, 0);
-        gpio_set_level(PIN_MOSI, (data >> i) & 1);
-        gpio_set_level(PIN_CLK, 1);
-    }
-    gpio_set_level(PIN_CS, 1);
-}
-
+// Send a command byte (DC low) over hardware SPI, CS asserted for the byte.
 static void oled_cmd(uint8_t cmd)
 {
     gpio_set_level(PIN_DC, 0);
-    oled_spi_write_byte(cmd);
+    gpio_set_level(PIN_CS, 0);
+    disp_spi_write(s_spi, &cmd, 1);
+    gpio_set_level(PIN_CS, 1);
+}
+
+// Send a data buffer (DC high) in one hardware-SPI (DMA) transfer.
+static void oled_data_buf(const uint8_t *data, size_t len)
+{
+    gpio_set_level(PIN_DC, 1);
+    gpio_set_level(PIN_CS, 0);
+    disp_spi_write(s_spi, data, len);
+    gpio_set_level(PIN_CS, 1);
 }
 
 static void oled_data(uint8_t data)
 {
-    gpio_set_level(PIN_DC, 1);
-    oled_spi_write_byte(data);
+    oled_data_buf(&data, 1);
 }
 
 static void oled_reset(void)
@@ -127,9 +124,7 @@ static void oled_clear_display(void)
     memset(s_framebuf, 0, SH1106_WIDTH * SH1106_PAGES);
     for (int page = 0; page < SH1106_PAGES; page++) {
         oled_set_pos(0, page);
-        for (int col = 0; col < SH1106_WIDTH; col++) {
-            oled_data(0x00);
-        }
+        oled_data_buf(&s_framebuf[page * SH1106_WIDTH], SH1106_WIDTH);
     }
 }
 
@@ -138,9 +133,7 @@ static void oled_flush(void)
     if (!s_framebuf) return;
     for (int page = 0; page < SH1106_PAGES; page++) {
         oled_set_pos(0, page);
-        for (int col = 0; col < SH1106_WIDTH; col++) {
-            oled_data(s_framebuf[page * SH1106_WIDTH + col]);
-        }
+        oled_data_buf(&s_framebuf[page * SH1106_WIDTH], SH1106_WIDTH);
     }
 }
 
@@ -169,6 +162,19 @@ static int oled_get_rows(void) { return OLED_ROWS; }
 static int oled_get_cols(void) { return OLED_COLS; }
 static uint32_t oled_get_caps(void) { return (1 << 1); }
 
+// Present an arbitrary framebuffer (GUI path). Expects the SH1106-native
+// MONO_VLSB format; copies the pixels into our flush buffer and pushes them.
+static int oled_present(const gfx_fb_t *fb)
+{
+    if (!s_fb || !fb || !fb->pixels) return -1;
+    if (fb->fmt != GFX_FMT_MONO_VLSB) return -1;
+
+    size_t n = fb->bytes < s_fb->bytes ? fb->bytes : s_fb->bytes;
+    memcpy(s_framebuf, fb->pixels, n);
+    oled_flush();
+    return 0;
+}
+
 static const display_driver_ops_t s_display_ops = {
     .init     = NULL,
     .shutdown = NULL,
@@ -177,6 +183,7 @@ static const display_driver_ops_t s_display_ops = {
     .get_rows = oled_get_rows,
     .get_cols = oled_get_cols,
     .get_caps = oled_get_caps,
+    .present  = oled_present,
 };
 
 static int oled_init_driver(void)
@@ -188,12 +195,21 @@ static int oled_init_driver(void)
     s_framebuf = s_fb->pixels;
     s_font = gfx_font_get("5x7");
 
+    // Claim the shared display SPI bus (SPI2 + DMA) and add our device.
+    if (disp_spi_add(PIN_CLK, PIN_MOSI, OLED_SPI_HZ, &s_spi) != 0) {
+        vconsole_printf("[oled] display SPI init failed\n");
+        gfx_fb_free(s_fb);
+        s_fb = NULL; s_framebuf = NULL;
+        return -1;
+    }
+
     oled_gpio_init();
     oled_hw_init();
     oled_clear_display();
 
     display_mux_register("oled", &s_display_ops);
-    vconsole_printf("[oled] SH1106 128x64 display ready (kernel gfx ABI)\n");
+    vconsole_printf("[oled] SH1106 128x64 ready (HW SPI @ %d MHz)\n",
+                    OLED_SPI_HZ / 1000000);
     return 0;
 }
 
@@ -214,7 +230,7 @@ static module_info_t info = {
     .magic       = MODULE_MAGIC,
     .abi_version = MODULE_ABI_VERSION,
     .name        = "oled",
-    .version     = "1.1.0",
+    .version     = "1.2.0",
     .requires    = "vconsole",
     .flags       = 0,
 };

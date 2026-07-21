@@ -22,6 +22,14 @@ void      bus_spi_unlock(spi_device_handle_t handle);
 esp_err_t bus_i2c_read (uint8_t addr, uint8_t *data, size_t len);
 esp_err_t bus_i2c_write(uint8_t addr, const uint8_t *data, size_t len);
 
+// Display SPI (hardware SPI2 + DMA) — exported to display driver modules to
+// replace bit-banging. disp_spi_add() lazily initialises the shared SPI2 bus
+// with the given CLK/MOSI pins and adds a device at clk_hz (no hardware CS —
+// the driver keeps managing CS/DC via GPIO). disp_spi_write() clocks bytes out
+// via DMA (through an internal bounce buffer). out_handle is a void* cookie.
+esp_err_t disp_spi_add  (int clk, int mosi, int clk_hz, void **out_handle);
+esp_err_t disp_spi_write(void *handle, const uint8_t *data, size_t len);
+
 const hal_bus_ops_t *bus_get_ops(void);
 
 #endif

@@ -8,6 +8,11 @@
 #define DISPLAY_CAP_FAST_REFRESH     (1 << 1)
 #define DISPLAY_CAP_COLOR            (1 << 2)
 
+// Forward declaration — avoids pulling gfx_abi.h into this shared header
+// (kernel and module builds reach it via different include paths). Drivers
+// that implement present() include gfx_abi.h and get the full type.
+struct gfx_fb;
+
 typedef struct {
     int       (*init)(void);
     void      (*shutdown)(void);
@@ -16,6 +21,9 @@ typedef struct {
     int       (*get_rows)(void);
     int       (*get_cols)(void);
     uint32_t  (*get_caps)(void);
+    // Optional: present an arbitrary framebuffer (GUI). NULL if unsupported.
+    // The fb's format is expected to match the display's native format.
+    int       (*present)(const struct gfx_fb *fb);
 } display_driver_ops_t;
 
 #endif

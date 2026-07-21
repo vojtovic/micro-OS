@@ -6,6 +6,7 @@
 #include "shell/cmd_bench.h"
 #include "services/display_mux.h"
 #include "services/input.h"
+#include "services/app.h"
 #include "services/wifi.h"
 #include "services/pkg_manager.h"
 #include "services/mem_pool.h"
@@ -375,16 +376,10 @@ static int shell_read_line(char *buf, size_t buf_size)
 
     int i = 0;
     while (i < (int)buf_size - 1) {
-        // Read from the input service (CardKB etc.) first, waiting briefly;
-        // fall back to the UART console. This is the poll delay too.
-        int c = input_get_key(20);
-        if (c < 0) {
-            c = getchar();
-            if (c == EOF) {
-                vTaskDelay(pdMS_TO_TICKS(30));
-                continue;
-            }
-        }
+        // All input (CardKB + UART, via the input service's UART bridge) comes
+        // through one unified stream, so apps and the shell read the same way.
+        int c = input_get_key(100);
+        if (c < 0) continue;    // nothing yet — keep waiting (prompt already up)
         if (c == '\n' || c == '\r') {
             vconsole_putchar('\n');
             break;
@@ -421,7 +416,15 @@ void shell_start(void)
         int ret;
         esp_err_t err = esp_console_run(line, &ret);
         if (err == ESP_ERR_NOT_FOUND) {
-            vconsole_printf("Unknown command: %s\n", line);
+            // Not a built-in command — try to run it as an app from
+            // /sdcard/bin/<name>.elf (the launcher: type a name → it runs).
+            char split[256];
+            strncpy(split, line, sizeof(split) - 1);
+            split[sizeof(split) - 1] = '\0';
+            char *argv[16];
+            int argc = esp_console_split_argv(split, argv, 16);
+            if (argc <= 0 || app_run(argv[0], argc, argv) == APP_NOT_FOUND)
+                vconsole_printf("Unknown command: %s\n", line);
         } else if (err == ESP_ERR_INVALID_ARG) {
             // empty
         } else if (err != ESP_OK) {

@@ -29,7 +29,7 @@ typedef enum {
 #define GFX_FB_DOUBLE        (1u << 0)  /* future: ping-pong buffers */
 #define GFX_FB_DIRTY_TRACK   (1u << 1)  /* future: dirty-rect tracking */
 
-typedef struct {
+typedef struct gfx_fb {
     uint8_t  *pixels;   /* PSRAM, cache-line aligned, DMA-capable */
     uint16_t  w, h;
     uint16_t  stride;   /* bytes per row */
