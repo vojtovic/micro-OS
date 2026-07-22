@@ -8,6 +8,7 @@
 #include "services/registry.h"
 #include "services/input.h"
 #include "services/app.h"
+#include "services/hwconf.h"
 #include "services/dma_service.h"
 #include "bus/bus_manager.h"
 #include "services/display_mux.h"
@@ -44,6 +45,8 @@ static const struct esp_elfsym s_symtab[] = {
     ESP_ELFSYM_EXPORT(display_mux_register),
     ESP_ELFSYM_EXPORT(display_mux_unregister),
     ESP_ELFSYM_EXPORT(display_mux_present),
+    ESP_ELFSYM_EXPORT(display_mux_render_text),
+    ESP_ELFSYM_EXPORT(display_mux_dims),
     ESP_ELFSYM_EXPORT(display_mux_grab),
     ESP_ELFSYM_EXPORT(display_mux_release),
     ESP_ELFSYM_EXPORT(gpio_config),
@@ -55,14 +58,22 @@ static const struct esp_elfsym s_symtab[] = {
     ESP_ELFSYM_EXPORT(heap_caps_free),
     ESP_ELFSYM_EXPORT(heap_caps_malloc),
     ESP_ELFSYM_EXPORT(memcpy),
+    ESP_ELFSYM_EXPORT(memmove),
     ESP_ELFSYM_EXPORT(memset),
     ESP_ELFSYM_EXPORT(module_register),
     ESP_ELFSYM_EXPORT(printf),
     ESP_ELFSYM_EXPORT(registry_add),
+    ESP_ELFSYM_EXPORT(registry_provide),
+    ESP_ELFSYM_EXPORT(registry_vtable),
     ESP_ELFSYM_EXPORT(registry_find),
     ESP_ELFSYM_EXPORT(registry_set_state),
     ESP_ELFSYM_EXPORT(snprintf),
     ESP_ELFSYM_EXPORT(strlen),
+    ESP_ELFSYM_EXPORT(strcpy),
+    ESP_ELFSYM_EXPORT(strncpy),
+    ESP_ELFSYM_EXPORT(strcmp),
+    ESP_ELFSYM_EXPORT(strncmp),
+    ESP_ELFSYM_EXPORT(strchr),
     ESP_ELFSYM_EXPORT(vTaskDelay),
     ESP_ELFSYM_EXPORT(vTaskDelete),
     ESP_ELFSYM_EXPORT(vconsole_printf),
@@ -101,6 +112,10 @@ static const struct esp_elfsym s_symtab[] = {
     /* I2C bus access — for input-source drivers (CardKB at 0x5F) */
     ESP_ELFSYM_EXPORT(bus_i2c_read),
     ESP_ELFSYM_EXPORT(bus_i2c_write),
+
+    /* Hardware config — modules read pins/resolution/orientation from conf */
+    ESP_ELFSYM_EXPORT(hwconf_get_int),
+    ESP_ELFSYM_EXPORT(hwconf_get_str),
 
     /* Display SPI (hardware SPI2 + DMA) — for display driver modules */
     ESP_ELFSYM_EXPORT(disp_spi_add),

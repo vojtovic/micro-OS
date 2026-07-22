@@ -126,6 +126,42 @@ esp_err_t display_mux_present(const char *name, const struct gfx_fb *fb)
     return ret;
 }
 
+esp_err_t display_mux_render_text(const char *name, const char *text, size_t len)
+{
+    if (!name || !text) return ESP_ERR_INVALID_ARG;
+
+    esp_err_t ret;
+    // Hold the lock across render() so the driver can't be freed mid-call.
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    display_slot_t *d = find_name(name);
+    if (!d) {
+        ret = ESP_ERR_NOT_FOUND;
+    } else if (!d->ops->render) {
+        ret = ESP_ERR_NOT_SUPPORTED;
+    } else {
+        d->ops->render(text, len);
+        ret = ESP_OK;
+    }
+    xSemaphoreGive(s_lock);
+    return ret;
+}
+
+esp_err_t display_mux_dims(const char *name, int *rows, int *cols)
+{
+    if (!name) return ESP_ERR_INVALID_ARG;
+
+    esp_err_t ret = ESP_ERR_NOT_FOUND;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    display_slot_t *d = find_name(name);
+    if (d) {
+        if (rows) *rows = d->ops->get_rows ? d->ops->get_rows() : 0;
+        if (cols) *cols = d->ops->get_cols ? d->ops->get_cols() : 0;
+        ret = ESP_OK;
+    }
+    xSemaphoreGive(s_lock);
+    return ret;
+}
+
 static esp_err_t set_grabbed(const char *name, bool grabbed)
 {
     if (!name) return ESP_ERR_INVALID_ARG;

@@ -45,6 +45,27 @@ esp_err_t registry_add(const char *name, uint16_t version, void *vtable, void *c
     return ESP_OK;
 }
 
+esp_err_t registry_provide(const char *name, uint16_t version, void *vtable, void *ctx)
+{
+    service_entry_t *e = registry_find(name);
+    if (e) {
+        e->version = version;
+        e->vtable  = vtable;
+        e->ctx     = ctx;
+        e->state   = SERVICE_RUNNING;
+        ESP_LOGI(TAG, "Updated: %s v%d", e->name, version);
+        return ESP_OK;
+    }
+    return registry_add(name, version, vtable, ctx);
+}
+
+void *registry_vtable(const char *name)
+{
+    service_entry_t *e = registry_find(name);
+    if (!e || e->state != SERVICE_RUNNING) return NULL;
+    return e->vtable;
+}
+
 esp_err_t registry_set_state(const char *name, service_state_t state)
 {
     service_entry_t *e = registry_find(name);

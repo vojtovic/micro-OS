@@ -12,6 +12,7 @@
 
 #include "module_types.h"
 #include "display_types.h"
+#include "gfx_abi.h"          // kernel graphics ABI (for the GUI present path)
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -29,6 +30,8 @@ extern int   gpio_config(const void *cfg);
 // Hardware display SPI (SPI2 + DMA) — replaces bit-banging.
 extern int   disp_spi_add(int clk, int mosi, int clk_hz, void **out_handle);
 extern int   disp_spi_write(void *handle, const uint8_t *data, size_t len);
+// Hardware config service — pins/orientation from hardware.conf.
+extern int   hwconf_get_int(const char *section, const char *key, int def);
 
 #define EINK_SPI_HZ  (10 * 1000 * 1000)   // 10 MHz
 extern void  vTaskDelay(uint32_t ticks);   // CONFIG_FREERTOS_HZ=1000 → ticks == ms
@@ -36,22 +39,27 @@ extern void  vTaskDelay(uint32_t ticks);   // CONFIG_FREERTOS_HZ=1000 → ticks 
 #define MALLOC_CAP_SPIRAM  (1 << 10)
 #define delay_ms(ms)       vTaskDelay(ms)
 
+// Native panel memory geometry (fixed by hardware): 240 wide x 360 tall,
+// portrait. The framebuffer and all panel transmits use these — rotation only
+// changes how logical draw coordinates map onto this native buffer.
 #define EPD_WIDTH    240
 #define EPD_HEIGHT   360
 #define EPD_BUF_SIZE (EPD_WIDTH * EPD_HEIGHT / 8)   // 10800 bytes
 
-// Text grid using the built-in 5x7 font (6px advance, 8px line height).
-#define EPD_COLS  (EPD_WIDTH / 6)    // 40
-#define EPD_ROWS  (EPD_HEIGHT / 8)   // 45
+// Default pins — overridden at load time by hardware.conf.
+#define DEF_PIN_CLK  12
+#define DEF_PIN_MOSI 11
+#define DEF_PIN_CS   16
+#define DEF_PIN_DC   15
+#define DEF_PIN_RST  17
+#define DEF_PIN_BUSY 18
 
-#define PIN_CLK   12
-#define PIN_MOSI  11
-#define PIN_CS    16
-#define PIN_DC    15
-#define PIN_RST   17
-#define PIN_BUSY  18
+// Runtime config, filled from hardware.conf in eink_start().
+static int s_pin_clk, s_pin_mosi, s_pin_cs, s_pin_dc, s_pin_rst, s_pin_busy;
+static int s_rotation;        // 0/90/180/270 — logical->native pixel transform
+static int s_lw, s_lh;        // logical draw dimensions (swap w/h at 90/270)
 
-static uint8_t *s_framebuf;   // current frame (0xFF = white)
+static uint8_t *s_framebuf;   // current frame (0xFF = white), native layout
 static uint8_t *s_oldbuf;     // last frame pushed to the panel (change detection)
 static void    *s_spi;        // hardware SPI device handle
 
@@ -92,11 +100,20 @@ static const uint8_t lut_R24_DU[42] = { 0x01,0x0f,0x01,0x00,0x00,0x01,0x01 };
 // ---------------------------------------------------------------------------
 // Low-level SPI (hardware SPI2 + DMA) and control lines
 // ---------------------------------------------------------------------------
+// Build a 64-bit GPIO mask WITHOUT a runtime 64-bit shift: `1ULL << pin` with a
+// runtime `pin` compiles to libgcc's __ashldi3, which is not in the kernel
+// symbol table. Splitting into 32-bit shifts keeps it native.
+static uint64_t pin_bit(int pin)
+{
+    return (pin < 32) ? (uint64_t)(1u << pin)
+                      : ((uint64_t)(1u << (pin - 32)) << 32);
+}
+
 static void epd_gpio_init(void)
 {
     // Only CS/DC/RST are GPIO outputs; CLK/MOSI are driven by the hardware SPI
     // peripheral (claimed by disp_spi_add). BUSY is an input.
-    uint64_t out_mask = (1ULL << PIN_CS) | (1ULL << PIN_DC) | (1ULL << PIN_RST);
+    uint64_t out_mask = pin_bit(s_pin_cs) | pin_bit(s_pin_dc) | pin_bit(s_pin_rst);
     uint32_t out_cfg[8];
     memset(out_cfg, 0, sizeof(out_cfg));
     out_cfg[0] = out_mask & 0xFFFFFFFF;    // pin_bit_mask low 32
@@ -104,7 +121,7 @@ static void epd_gpio_init(void)
     out_cfg[2] = 2;                        // mode = GPIO_MODE_OUTPUT
     gpio_config(out_cfg);
 
-    uint64_t in_mask = (1ULL << PIN_BUSY);
+    uint64_t in_mask = pin_bit(s_pin_busy);
     uint32_t in_cfg[8];
     memset(in_cfg, 0, sizeof(in_cfg));
     in_cfg[0] = in_mask & 0xFFFFFFFF;
@@ -112,26 +129,26 @@ static void epd_gpio_init(void)
     in_cfg[2] = 1;                         // mode = GPIO_MODE_INPUT
     gpio_config(in_cfg);
 
-    gpio_set_level(PIN_CS, 1);
-    gpio_set_level(PIN_DC, 0);
-    gpio_set_level(PIN_RST, 1);
+    gpio_set_level(s_pin_cs, 1);
+    gpio_set_level(s_pin_dc, 0);
+    gpio_set_level(s_pin_rst, 1);
 }
 
 static void epd_cmd(uint8_t cmd)
 {
-    gpio_set_level(PIN_DC, 0);
-    gpio_set_level(PIN_CS, 0);
+    gpio_set_level(s_pin_dc, 0);
+    gpio_set_level(s_pin_cs, 0);
     disp_spi_write(s_spi, &cmd, 1);
-    gpio_set_level(PIN_CS, 1);
+    gpio_set_level(s_pin_cs, 1);
 }
 
 // Send a data buffer (DC high) in one hardware-SPI (DMA) transfer.
 static void epd_data_buf(const uint8_t *data, size_t len)
 {
-    gpio_set_level(PIN_DC, 1);
-    gpio_set_level(PIN_CS, 0);
+    gpio_set_level(s_pin_dc, 1);
+    gpio_set_level(s_pin_cs, 0);
     disp_spi_write(s_spi, data, len);
-    gpio_set_level(PIN_CS, 1);
+    gpio_set_level(s_pin_cs, 1);
 }
 
 static void epd_data(uint8_t data)
@@ -143,7 +160,7 @@ static void epd_data(uint8_t data)
 static void epd_wait_busy(void)
 {
     int timeout_ms = 8000;
-    while (gpio_get_level(PIN_BUSY) == 1) {
+    while (gpio_get_level(s_pin_busy) == 1) {
         delay_ms(10);
         timeout_ms -= 10;
         if (timeout_ms <= 0) {
@@ -156,11 +173,11 @@ static void epd_wait_busy(void)
 
 static void epd_reset(void)
 {
-    gpio_set_level(PIN_RST, 1);
+    gpio_set_level(s_pin_rst, 1);
     delay_ms(200);
-    gpio_set_level(PIN_RST, 0);
+    gpio_set_level(s_pin_rst, 0);
     delay_ms(2);
-    gpio_set_level(PIN_RST, 1);
+    gpio_set_level(s_pin_rst, 1);
     delay_ms(200);
 }
 
@@ -375,11 +392,24 @@ static const uint8_t font_5x7[] = {
     0x00,0x00,0x00,0x00,0x00,
 };
 
+// Set a pixel in LOGICAL coordinates (bounded by s_lw x s_lh). The rotation
+// maps logical (x,y) onto the panel's native 240x360 memory, so all higher-
+// level drawing (text) is orientation-agnostic.
 static void epd_set_pixel(int x, int y, int color)
 {
-    if (x < 0 || x >= EPD_WIDTH || y < 0 || y >= EPD_HEIGHT) return;
-    int byte_idx = (y * EPD_WIDTH + x) / 8;
-    int bit_idx = 7 - (x % 8);
+    if (x < 0 || x >= s_lw || y < 0 || y >= s_lh) return;
+
+    int px, py;
+    switch (s_rotation) {
+        case 90:  px = EPD_WIDTH  - 1 - y; py = x;                 break;
+        case 180: px = EPD_WIDTH  - 1 - x; py = EPD_HEIGHT - 1 - y; break;
+        case 270: px = y;                  py = EPD_HEIGHT - 1 - x; break;
+        default:  px = x;                  py = y;                 break;  // 0
+    }
+    if (px < 0 || px >= EPD_WIDTH || py < 0 || py >= EPD_HEIGHT) return;
+
+    int byte_idx = (py * EPD_WIDTH + px) / 8;
+    int bit_idx  = 7 - (px % 8);
     if (color)
         s_framebuf[byte_idx] |= (1 << bit_idx);
     else
@@ -410,29 +440,11 @@ static void epd_draw_char(int col, int row, char c)
 // ---------------------------------------------------------------------------
 // display_mux driver ops
 // ---------------------------------------------------------------------------
-static void eink_render(const char *text, size_t len)
+// Push s_framebuf to the panel, refreshing only the band of rows that changed
+// since the last frame (skips the slow ~2 s full refresh when nothing changed).
+static void eink_commit(void)
 {
-    if (!s_framebuf || !s_oldbuf) return;
-
-    memset(s_framebuf, 0xFF, EPD_BUF_SIZE);
-
-    int row = 0, col = 0;
-    for (size_t i = 0; i < len && row < EPD_ROWS; i++) {
-        if (text[i] == '\n') {
-            row++;
-            col = 0;
-            continue;
-        }
-        if (col < EPD_COLS) {
-            epd_draw_char(col, row, text[i]);
-            col++;
-        }
-    }
-
-    // E-paper refresh is slow (~2 s) and wears the panel; skip it when the
-    // rendered frame is identical to what is already on the display.
     // (Inline compare — memcmp is not in the kernel symbol table.)
-    // Find the band of rows that changed since the last frame on the panel.
     int y0 = EPD_HEIGHT, y1 = -1;
     for (int i = 0; i < EPD_BUF_SIZE; i++) {
         if (s_framebuf[i] != s_oldbuf[i]) {
@@ -461,6 +473,48 @@ static void eink_render(const char *text, size_t len)
     memcpy(s_oldbuf, s_framebuf, EPD_BUF_SIZE);
 }
 
+static void eink_render(const char *text, size_t len)
+{
+    if (!s_framebuf || !s_oldbuf) return;
+
+    memset(s_framebuf, 0xFF, EPD_BUF_SIZE);
+
+    int row = 0, col = 0;
+    for (size_t i = 0; i < len && row < (s_lh / 8); i++) {
+        if (text[i] == '\n') {
+            row++;
+            col = 0;
+            continue;
+        }
+        if (col < (s_lw / 6)) {
+            epd_draw_char(col, row, text[i]);
+            col++;
+        }
+    }
+    eink_commit();
+}
+
+// GUI path: blit a graphics framebuffer (MONO_HMSB, logical dimensions) onto
+// the panel. gfx foreground pixels (1) become ink (black); the rotation and
+// clipping are handled per-pixel by epd_set_pixel.
+static int eink_present(const gfx_fb_t *fb)
+{
+    if (!s_framebuf || !s_oldbuf || !fb || !fb->pixels) return -1;
+    if (fb->fmt != GFX_FMT_MONO_HMSB) return -1;
+
+    memset(s_framebuf, 0xFF, EPD_BUF_SIZE);   // white paper
+
+    for (int y = 0; y < fb->h; y++) {
+        const uint8_t *prow = fb->pixels + (size_t)y * fb->stride;
+        for (int x = 0; x < fb->w; x++) {
+            int on = (prow[x >> 3] >> (7 - (x & 7))) & 1;
+            epd_set_pixel(x, y, on ? 0 : 1);   // invert: gfx-1 -> black ink
+        }
+    }
+    eink_commit();
+    return 0;
+}
+
 static void eink_clear(void)
 {
     if (!s_framebuf) return;
@@ -470,8 +524,8 @@ static void eink_clear(void)
     if (s_oldbuf) memcpy(s_oldbuf, s_framebuf, EPD_BUF_SIZE);
 }
 
-static int eink_get_rows(void) { return EPD_ROWS; }
-static int eink_get_cols(void) { return EPD_COLS; }
+static int eink_get_rows(void) { return (s_lh / 8); }
+static int eink_get_cols(void) { return (s_lw / 6); }
 static uint32_t eink_get_caps(void) { return DISPLAY_CAP_PARTIAL_REFRESH; }
 
 static const display_driver_ops_t s_display_ops = {
@@ -482,10 +536,30 @@ static const display_driver_ops_t s_display_ops = {
     .get_rows = eink_get_rows,
     .get_cols = eink_get_cols,
     .get_caps = eink_get_caps,
+    .present  = eink_present,
 };
 
 static int eink_start(void)
 {
+    // Read pins + orientation from hardware.conf (fall back to defaults).
+    s_pin_clk  = hwconf_get_int("display_spi", "clk",  DEF_PIN_CLK);
+    s_pin_mosi = hwconf_get_int("display_spi", "mosi", DEF_PIN_MOSI);
+    s_pin_cs   = hwconf_get_int("eink", "cs",   DEF_PIN_CS);
+    s_pin_dc   = hwconf_get_int("eink", "dc",   DEF_PIN_DC);
+    s_pin_rst  = hwconf_get_int("eink", "rst",  DEF_PIN_RST);
+    s_pin_busy = hwconf_get_int("eink", "busy", DEF_PIN_BUSY);
+    s_rotation = hwconf_get_int("eink", "rotation", 0);
+    if (s_rotation != 90 && s_rotation != 180 && s_rotation != 270)
+        s_rotation = 0;
+    // Logical draw dimensions: 90/270 present the panel in landscape.
+    if (s_rotation == 90 || s_rotation == 270) {
+        s_lw = EPD_HEIGHT;   // 360
+        s_lh = EPD_WIDTH;    // 240
+    } else {
+        s_lw = EPD_WIDTH;    // 240
+        s_lh = EPD_HEIGHT;   // 360
+    }
+
     s_framebuf = (uint8_t *)heap_caps_malloc(EPD_BUF_SIZE, MALLOC_CAP_SPIRAM);
     s_oldbuf   = (uint8_t *)heap_caps_malloc(EPD_BUF_SIZE, MALLOC_CAP_SPIRAM);
     if (!s_framebuf || !s_oldbuf) {
@@ -501,7 +575,7 @@ static int eink_start(void)
     memset(s_oldbuf, 0x00, EPD_BUF_SIZE);
 
     // Claim the shared display SPI bus (SPI2 + DMA) and add our device.
-    if (disp_spi_add(PIN_CLK, PIN_MOSI, EINK_SPI_HZ, &s_spi) != 0) {
+    if (disp_spi_add(s_pin_clk, s_pin_mosi, EINK_SPI_HZ, &s_spi) != 0) {
         vconsole_printf("[eink] display SPI init failed\n");
         heap_caps_free(s_framebuf); heap_caps_free(s_oldbuf);
         s_framebuf = NULL; s_oldbuf = NULL;
@@ -513,8 +587,8 @@ static int eink_start(void)
     eink_clear();
 
     display_mux_register("eink", &s_display_ops);
-    vconsole_printf("[eink] Waveshare 3.52\" 360x240 e-paper ready (%dx%d chars)\n",
-                    EPD_COLS, EPD_ROWS);
+    vconsole_printf("[eink] Waveshare 3.52\" e-paper ready — rot=%d, %dx%d px, %dx%d chars\n",
+                    s_rotation, s_lw, s_lh, (s_lw / 6), (s_lh / 8));
     return 0;
 }
 
@@ -536,7 +610,7 @@ static module_info_t info = {
     .magic       = MODULE_MAGIC,
     .abi_version = MODULE_ABI_VERSION,
     .name        = "eink",
-    .version     = "2.3.0",
+    .version     = "2.5.0",
     .requires    = "vconsole",
     .flags       = 0,
 };

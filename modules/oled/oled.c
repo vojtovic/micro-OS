@@ -17,35 +17,47 @@ extern int   snprintf(char *str, size_t size, const char *fmt, ...);
 // Hardware display SPI (SPI2 + DMA) — replaces bit-banging.
 extern int   disp_spi_add(int clk, int mosi, int clk_hz, void **out_handle);
 extern int   disp_spi_write(void *handle, const uint8_t *data, size_t len);
+// Hardware config service — pins/resolution/orientation from hardware.conf.
+extern int   hwconf_get_int(const char *section, const char *key, int def);
 
 #define OLED_SPI_HZ  (10 * 1000 * 1000)   // 10 MHz
 
 #define MALLOC_CAP_SPIRAM  (1 << 10)
 
-#define SH1106_WIDTH   128
-#define SH1106_HEIGHT   64
-#define SH1106_PAGES     8
+// Defaults — overridden at load time by hardware.conf ([display_spi], [oled]).
+#define DEF_WIDTH   128
+#define DEF_HEIGHT   64
+#define DEF_PIN_CLK  12
+#define DEF_PIN_MOSI 11
+#define DEF_PIN_CS   10
+#define DEF_PIN_DC   21
+#define DEF_PIN_RST  47
 
-#define OLED_ROWS  8
-#define OLED_COLS  21
-
-#define PIN_CLK   12
-#define PIN_MOSI  11
-#define PIN_CS    10
-#define PIN_DC    21
-#define PIN_RST   47
+// Runtime config, filled from hardware.conf in oled_init_driver().
+static int s_pin_clk, s_pin_mosi, s_pin_cs, s_pin_dc, s_pin_rst;
+static int s_width, s_height, s_pages;   // panel geometry
+static int s_rotation;                   // 0 or 180 (hardware segment/COM remap)
 
 static uint8_t          *s_framebuf;   // == s_fb->pixels (raw bytes for SH1106 flush)
 static gfx_fb_t         *s_fb;          // kernel framebuffer (MONO_VLSB, SH1106 native)
 static const gfx_font_t *s_font;        // kernel 5x7 font
 static void             *s_spi;         // hardware SPI device handle
 
+// Build a 64-bit GPIO mask WITHOUT a runtime 64-bit shift: `1ULL << pin` with a
+// runtime `pin` compiles to libgcc's __ashldi3, which is not in the kernel
+// symbol table. Splitting into 32-bit shifts keeps it native.
+static uint64_t pin_bit(int pin)
+{
+    return (pin < 32) ? (uint64_t)(1u << pin)
+                      : ((uint64_t)(1u << (pin - 32)) << 32);
+}
+
 static void oled_gpio_init(void)
 {
     // Only CS/DC/RST are GPIO — CLK/MOSI are driven by the hardware SPI
     // peripheral (claimed by disp_spi_add), so they must NOT be configured
     // here. gpio_config_t in ESP-IDF v5.x is 24 bytes; use 8 uint32_t.
-    uint64_t pin_mask = (1ULL << PIN_CS) | (1ULL << PIN_DC) | (1ULL << PIN_RST);
+    uint64_t pin_mask = pin_bit(s_pin_cs) | pin_bit(s_pin_dc) | pin_bit(s_pin_rst);
     uint32_t cfg[8];
     memset(cfg, 0, sizeof(cfg));
     cfg[0] = pin_mask & 0xFFFFFFFF;       // pin_bit_mask low 32
@@ -53,27 +65,27 @@ static void oled_gpio_init(void)
     cfg[2] = 2;                            // mode = GPIO_MODE_OUTPUT
     gpio_config(cfg);
 
-    gpio_set_level(PIN_CS,  1);
-    gpio_set_level(PIN_DC,  0);
-    gpio_set_level(PIN_RST, 1);
+    gpio_set_level(s_pin_cs,  1);
+    gpio_set_level(s_pin_dc,  0);
+    gpio_set_level(s_pin_rst, 1);
 }
 
 // Send a command byte (DC low) over hardware SPI, CS asserted for the byte.
 static void oled_cmd(uint8_t cmd)
 {
-    gpio_set_level(PIN_DC, 0);
-    gpio_set_level(PIN_CS, 0);
+    gpio_set_level(s_pin_dc, 0);
+    gpio_set_level(s_pin_cs, 0);
     disp_spi_write(s_spi, &cmd, 1);
-    gpio_set_level(PIN_CS, 1);
+    gpio_set_level(s_pin_cs, 1);
 }
 
 // Send a data buffer (DC high) in one hardware-SPI (DMA) transfer.
 static void oled_data_buf(const uint8_t *data, size_t len)
 {
-    gpio_set_level(PIN_DC, 1);
-    gpio_set_level(PIN_CS, 0);
+    gpio_set_level(s_pin_dc, 1);
+    gpio_set_level(s_pin_cs, 0);
     disp_spi_write(s_spi, data, len);
-    gpio_set_level(PIN_CS, 1);
+    gpio_set_level(s_pin_cs, 1);
 }
 
 static void oled_data(uint8_t data)
@@ -83,9 +95,9 @@ static void oled_data(uint8_t data)
 
 static void oled_reset(void)
 {
-    gpio_set_level(PIN_RST, 0);
+    gpio_set_level(s_pin_rst, 0);
     for (volatile int i = 0; i < 100000; i++);
-    gpio_set_level(PIN_RST, 1);
+    gpio_set_level(s_pin_rst, 1);
     for (volatile int i = 0; i < 100000; i++);
 }
 
@@ -95,12 +107,19 @@ static void oled_hw_init(void)
 
     oled_cmd(0xAE);
     oled_cmd(0xD5); oled_cmd(0x80);
-    oled_cmd(0xA8); oled_cmd(0x3F);
+    oled_cmd(0xA8); oled_cmd((uint8_t)(s_height - 1));   // multiplex = height-1
     oled_cmd(0xD3); oled_cmd(0x00);
     oled_cmd(0x40);
     oled_cmd(0xAD); oled_cmd(0x8B);
-    oled_cmd(0xA1);
-    oled_cmd(0xC8);
+    // Orientation via hardware remap (zero CPU cost): 0° uses segment-remap
+    // 0xA1 + reversed COM scan 0xC8; 180° flips both to 0xA0 + 0xC0.
+    if (s_rotation == 180) {
+        oled_cmd(0xA0);
+        oled_cmd(0xC0);
+    } else {
+        oled_cmd(0xA1);
+        oled_cmd(0xC8);
+    }
     oled_cmd(0xDA); oled_cmd(0x12);
     oled_cmd(0x81); oled_cmd(0xCF);
     oled_cmd(0xD9); oled_cmd(0x1F);
@@ -121,19 +140,19 @@ static void oled_set_pos(uint8_t col, uint8_t page)
 static void oled_clear_display(void)
 {
     if (!s_framebuf) return;
-    memset(s_framebuf, 0, SH1106_WIDTH * SH1106_PAGES);
-    for (int page = 0; page < SH1106_PAGES; page++) {
+    memset(s_framebuf, 0, s_width * s_pages);
+    for (int page = 0; page < s_pages; page++) {
         oled_set_pos(0, page);
-        oled_data_buf(&s_framebuf[page * SH1106_WIDTH], SH1106_WIDTH);
+        oled_data_buf(&s_framebuf[page * s_width], s_width);
     }
 }
 
 static void oled_flush(void)
 {
     if (!s_framebuf) return;
-    for (int page = 0; page < SH1106_PAGES; page++) {
+    for (int page = 0; page < s_pages; page++) {
         oled_set_pos(0, page);
-        oled_data_buf(&s_framebuf[page * SH1106_WIDTH], SH1106_WIDTH);
+        oled_data_buf(&s_framebuf[page * s_width], s_width);
     }
 }
 
@@ -148,7 +167,7 @@ static void oled_render(const char *text, size_t len)
     memcpy(buf, text, n);
     buf[n] = '\0';
 
-    gfx_fill_rect(s_fb, 0, 0, SH1106_WIDTH, SH1106_HEIGHT, 0);
+    gfx_fill_rect(s_fb, 0, 0, s_width, s_height, 0);
     gfx_draw_text(s_fb, 0, 0, buf, s_font, 1);
     oled_flush();
 }
@@ -158,8 +177,8 @@ static void oled_clear(void)
     oled_clear_display();
 }
 
-static int oled_get_rows(void) { return OLED_ROWS; }
-static int oled_get_cols(void) { return OLED_COLS; }
+static int oled_get_rows(void) { return s_pages; }        // text rows = pages (8px each)
+static int oled_get_cols(void) { return s_width / 6; }     // 5x7 font + 1px advance
 static uint32_t oled_get_caps(void) { return (1 << 1); }
 
 // Present an arbitrary framebuffer (GUI path). Expects the SH1106-native
@@ -188,15 +207,30 @@ static const display_driver_ops_t s_display_ops = {
 
 static int oled_init_driver(void)
 {
+    // Read pins, resolution and orientation from hardware.conf (falling back to
+    // the compiled defaults), so the panel behaves per the system config file.
+    s_pin_clk  = hwconf_get_int("display_spi", "clk",  DEF_PIN_CLK);
+    s_pin_mosi = hwconf_get_int("display_spi", "mosi", DEF_PIN_MOSI);
+    s_pin_cs   = hwconf_get_int("oled", "cs",  DEF_PIN_CS);
+    s_pin_dc   = hwconf_get_int("oled", "dc",  DEF_PIN_DC);
+    s_pin_rst  = hwconf_get_int("oled", "rst", DEF_PIN_RST);
+    s_width    = hwconf_get_int("oled", "width",    DEF_WIDTH);
+    s_height   = hwconf_get_int("oled", "height",   DEF_HEIGHT);
+    s_rotation = hwconf_get_int("oled", "rotation", 0);
+    if (s_rotation != 180) s_rotation = 0;   // OLED supports 0/180 (hw remap)
+    if (s_width  <= 0 || s_width  > 128) s_width  = DEF_WIDTH;
+    if (s_height <= 0 || s_height >  64) s_height = DEF_HEIGHT;
+    s_pages = (s_height + 7) / 8;
+
     // SH1106 native layout is MONO_VLSB (page-based), which is exactly the
     // kernel gfx MONO_VLSB format — so s_fb->pixels is the SH1106 flush buffer.
-    s_fb = gfx_fb_alloc(SH1106_WIDTH, SH1106_HEIGHT, GFX_FMT_MONO_VLSB, 0);
+    s_fb = gfx_fb_alloc(s_width, s_height, GFX_FMT_MONO_VLSB, 0);
     if (!s_fb) return -1;
     s_framebuf = s_fb->pixels;
     s_font = gfx_font_get("5x7");
 
     // Claim the shared display SPI bus (SPI2 + DMA) and add our device.
-    if (disp_spi_add(PIN_CLK, PIN_MOSI, OLED_SPI_HZ, &s_spi) != 0) {
+    if (disp_spi_add(s_pin_clk, s_pin_mosi, OLED_SPI_HZ, &s_spi) != 0) {
         vconsole_printf("[oled] display SPI init failed\n");
         gfx_fb_free(s_fb);
         s_fb = NULL; s_framebuf = NULL;
@@ -208,8 +242,8 @@ static int oled_init_driver(void)
     oled_clear_display();
 
     display_mux_register("oled", &s_display_ops);
-    vconsole_printf("[oled] SH1106 128x64 ready (HW SPI @ %d MHz)\n",
-                    OLED_SPI_HZ / 1000000);
+    vconsole_printf("[oled] SH1106 %dx%d rot=%d ready (HW SPI @ %d MHz)\n",
+                    s_width, s_height, s_rotation, OLED_SPI_HZ / 1000000);
     return 0;
 }
 
@@ -230,7 +264,7 @@ static module_info_t info = {
     .magic       = MODULE_MAGIC,
     .abi_version = MODULE_ABI_VERSION,
     .name        = "oled",
-    .version     = "1.2.0",
+    .version     = "1.3.0",
     .requires    = "vconsole",
     .flags       = 0,
 };

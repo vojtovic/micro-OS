@@ -3,6 +3,7 @@
 #include "hal/internal_fs.h"
 #include "shell/shell.h"
 #include "services/init.h"
+#include "services/hwconf.h"
 #include "services/klog.h"
 #include "services/vconsole.h"
 #include "services/registry.h"
@@ -90,6 +91,9 @@ void app_main(void)
     } else {
         ESP_LOGW(TAG, "SD not available — running without storage");
     }
+
+    // Parse hardware.conf so driver modules can read pins/resolution/orientation
+    hwconf_load();
 
     // Service registry — HAL vtables allow modules to call through the registry
     ESP_ERROR_CHECK(registry_init());

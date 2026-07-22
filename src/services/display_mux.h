@@ -30,6 +30,15 @@ esp_err_t display_mux_refresh(const char *name);
 // has no present op.
 esp_err_t display_mux_present(const char *name, const struct gfx_fb *fb);
 
+// Push a text string to a named display's text render op (the GUI-text path,
+// used by a grabbed display since the console mirror is off). Returns
+// ESP_ERR_NOT_FOUND / ESP_ERR_NOT_SUPPORTED like present.
+esp_err_t display_mux_render_text(const char *name, const char *text, size_t len);
+
+// Query a named display's text grid size (rows x cols). Either pointer may be
+// NULL. Returns ESP_ERR_NOT_FOUND if there is no such display.
+esp_err_t display_mux_dims(const char *name, int *rows, int *cols);
+
 // Grab/release a display for exclusive GUI use — while grabbed, the console
 // auto-mirror skips it, so a graphical app owns the screen. Release restores
 // normal console mirroring.

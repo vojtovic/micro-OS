@@ -14,6 +14,7 @@
 #include "services/registry.h"
 #include "services/vconsole.h"
 #include "services/init.h"
+#include "services/hwconf.h"
 #include "hal/storage.h"
 #include "esp_console.h"
 #include "esp_log.h"
@@ -348,6 +349,10 @@ esp_err_t shell_init(void)
 
     // Fstab command
     ret = cmd_fstab_register();
+    if (ret != ESP_OK) return ret;
+
+    // Hardware config command
+    ret = cmd_hwconf_register();
     if (ret != ESP_OK) return ret;
 
     // Module management commands (modload, lsmod, etc.)

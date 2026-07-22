@@ -27,6 +27,10 @@ esp_err_t storage_sd_mount(void)
 
     sdmmc_host_t host = SDSPI_HOST_DEFAULT();
     host.slot = SD_SPI_HOST;
+    // Default is 20 MHz. Drop to 10 MHz for signal-integrity margin on breadboard
+    // / dupont wiring — the SD card timing out (0x107) is often marginal wiring or
+    // a power dip during writes (e-ink charge-pump spikes share the 3V3 rail).
+    host.max_freq_khz = 10000;
 
     sdspi_device_config_t slot_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
     slot_cfg.gpio_cs   = PIN_SD_CS;
