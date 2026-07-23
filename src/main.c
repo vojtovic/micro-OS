@@ -4,6 +4,8 @@
 #include "shell/shell.h"
 #include "services/init.h"
 #include "services/hwconf.h"
+#include "services/session.h"
+#include "services/compositor.h"
 #include "services/klog.h"
 #include "services/vconsole.h"
 #include "services/registry.h"
@@ -110,6 +112,10 @@ void app_main(void)
     if (input_err != ESP_OK)
         ESP_LOGW(TAG, "input service init failed — keyboard input unavailable");
 
+    // Session manager — cooperative multitasking (spawn/switch apps)
+    if (session_init() != ESP_OK)
+        ESP_LOGW(TAG, "session manager init failed — multitasking unavailable");
+
     // Kernel symbol table — enables ELF modules to resolve kernel functions
     ESP_ERROR_CHECK(symtab_init());
 
@@ -123,6 +129,10 @@ void app_main(void)
             ESP_LOGW(TAG, "Display mux init failed");
         }
     }
+
+    // Compositor — focus-driven window surfaces for graphical apps
+    if (compositor_init() != ESP_OK)
+        ESP_LOGW(TAG, "compositor init failed — graphical apps limited");
 
     // Wi-Fi service — STA mode, connects on demand via shell
     esp_err_t wifi_err = wifi_service_init();

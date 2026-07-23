@@ -25,6 +25,14 @@ const display_slot_t *display_mux_get(int index);
 // For slow, on-demand displays (e-ink) that are not auto-mirrored live.
 esp_err_t display_mux_refresh(const char *name);
 
+// Push the console onto FAST displays (OLED) even when grabbed — used to clear a
+// paused GUI app's frozen frame when focus returns to the shell.
+esp_err_t display_mux_refresh_fast(void);
+
+// True if the named display advertises DISPLAY_CAP_FAST_REFRESH (OLED). Slow
+// displays (e-ink) return false — the compositor debounces their redraws.
+bool display_mux_is_fast(const char *name);
+
 // Present an arbitrary framebuffer to a named display (GUI path). Returns
 // ESP_ERR_NOT_FOUND if no such display, ESP_ERR_NOT_SUPPORTED if the driver
 // has no present op.

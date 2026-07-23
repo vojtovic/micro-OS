@@ -25,13 +25,15 @@
 
 extern int vconsole_printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 extern int input_get_key(uint32_t timeout_ms);                       // -1 on timeout
-extern int display_mux_grab(const char *name);                       // 0 == ESP_OK
-extern int display_mux_release(const char *name);
-extern int display_mux_render_text(const char *name, const char *text, size_t len);
 // File I/O via the kernel (modules can't reach libc fopen directly).
 extern int app_read_file(const char *path, char *buf, int max);      // bytes, or -1
 extern int app_write_file(const char *path, const char *buf, int len); // 0 == ok
 extern int snprintf(char *str, size_t size, const char *fmt, ...);
+// Compositor text windows (the compositor blits stored text on focus, so this
+// app needs no grab/present/repaint).
+extern int  comp_open_text(const char *display);
+extern void comp_set_text(int win, const char *text, int len);
+extern void comp_close(int win);
 
 #define OLED       "oled"
 #define EINK       "eink"
@@ -46,7 +48,7 @@ static char doc[DOC_MAX];
 static int  doc_len;
 static char word[WORD_MAX];
 static int  word_len;
-static int  have_eink;
+static int  eink_win = -1, oled_win = -1;
 
 static char note_name[NAME_MAX + 1] = "notes";       // which document
 static char notes_path[64] = "/sdcard/home/notes.txt";
@@ -108,11 +110,10 @@ static int valid_name(const char *s)
 
 static void show_eink(void)
 {
-    if (!have_eink) return;
     int n = 0;
     memcpy(compose, header, (size_t)header_len);  n += header_len;
     memcpy(compose + n, doc, (size_t)doc_len);     n += doc_len;
-    display_mux_render_text(EINK, compose, (size_t)n);
+    comp_set_text(eink_win, compose, n);
 }
 
 // OLED shows a prompt with the in-progress word and a cursor: "> word_".
@@ -124,7 +125,7 @@ static void show_oled(void)
     memcpy(line + 2, word, (size_t)word_len);
     int n = 2 + word_len;
     line[n++] = '_';                 // cursor
-    display_mux_render_text(OLED, line, (size_t)n);
+    comp_set_text(oled_win, line, n);
 }
 
 static void commit_word(int with_newline)
@@ -149,16 +150,10 @@ int main(int argc, char *argv[])
     }
     snprintf(notes_path, sizeof(notes_path), "/sdcard/home/%s.txt", note_name);
 
-    int have_oled = (display_mux_grab(OLED) == 0);
-    have_eink     = (display_mux_grab(EINK) == 0);
-
-    if (!have_oled) {
-        vconsole_printf("desktop: OLED not available — load the 'oled' driver first\n");
-        if (have_eink) display_mux_release(EINK);
-        return 1;
-    }
-    if (!have_eink)
-        vconsole_printf("desktop: e-ink not available — commits won't be shown\n");
+    // Compositor text windows. These succeed even if a display isn't present —
+    // its commits simply become no-ops — so no availability juggling is needed.
+    oled_win = comp_open_text(OLED);
+    eink_win = comp_open_text(EINK);
 
     build_header();
 
@@ -175,7 +170,7 @@ int main(int argc, char *argv[])
         int k = input_get_key(1000000);   // long block; loop on timeout
         if (k < 0) continue;
 
-        if (k == 0x1B) break;                              // ESC
+        if (k == 0x1B) break;                              // ESC (compositor repaints on focus)
         if (k == 0x20) { commit_word(0); continue; }       // SPACE
         if (k == 0x0D || k == 0x0A) { commit_word(1); continue; }  // ENTER
         if (k == 0x08 || k == 0x7F) {                      // BACKSPACE / DEL
@@ -216,11 +211,10 @@ int main(int argc, char *argv[])
     if (word_len > 0) doc_append(word, word_len);
     int saved = app_write_file(notes_path, doc, doc_len);
 
-    // Leave the document on the e-ink; clear the OLED prompt and hand the
-    // screens back to the console.
-    display_mux_render_text(OLED, "", 0);
-    display_mux_release(OLED);
-    if (have_eink) display_mux_release(EINK);
+    // Close the windows; the compositor releases the displays back to the
+    // console (the e-ink keeps its last frame until something else draws).
+    comp_close(oled_win);
+    comp_close(eink_win);
     vconsole_printf("desktop: %s %s (%d bytes)\n",
                     saved == 0 ? "saved" : "FAILED to save", notes_path, doc_len);
     return 0;

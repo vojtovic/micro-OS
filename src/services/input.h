@@ -25,6 +25,25 @@ int input_get_key(uint32_t timeout_ms);
 // the app's own input loop.
 void input_flush(void);
 
+// --- cooperative multitasking focus gating -------------------------------
+// TAB rotates the foreground app; it is handled globally and never delivered.
+// REPAINT is injected to a newly-focused app so it can redraw its screen.
+#define INPUT_KEY_SWITCH   0x09
+#define INPUT_KEY_REPAINT  0x01
+
+// Set which task is allowed to read keys (a FreeRTOS TaskHandle_t). NULL means
+// ungated — used at boot so the shell reads normally before any app is spawned.
+void input_set_focus(void *task);
+
+// Ask that `task` receive one INPUT_KEY_REPAINT the next time it reads input
+// (reliable one-shot repaint on focus-in, not subject to queue flush/races).
+void input_request_repaint(void *task);
+
+// Register the callback run when the switch key (TAB) is read. The argument
+// `sel` says what to do: -2 = cycle to next, -1 = focus the shell, 0.. = jump to
+// that app (TAB followed quickly by a digit). Cleared with NULL.
+void input_set_switch_handler(void (*cb)(int sel));
+
 // Registers the `input` diagnostic shell command (push/read/status).
 esp_err_t cmd_input_register(void);
 

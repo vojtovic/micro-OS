@@ -9,6 +9,10 @@
 #include "services/input.h"
 #include "services/app.h"
 #include "services/hwconf.h"
+#include "services/compositor.h"
+#include "services/session.h"
+#include "services/ui.h"
+#include "services/duo.h"
 #include "services/dma_service.h"
 #include "bus/bus_manager.h"
 #include "services/display_mux.h"
@@ -47,6 +51,37 @@ static const struct esp_elfsym s_symtab[] = {
     ESP_ELFSYM_EXPORT(display_mux_present),
     ESP_ELFSYM_EXPORT(display_mux_render_text),
     ESP_ELFSYM_EXPORT(display_mux_dims),
+
+    /* Compositor — focus-driven window surfaces for graphical apps */
+    ESP_ELFSYM_EXPORT(comp_open_gfx),
+    ESP_ELFSYM_EXPORT(comp_open_text),
+    ESP_ELFSYM_EXPORT(comp_window_fb),
+    ESP_ELFSYM_EXPORT(comp_commit),
+    ESP_ELFSYM_EXPORT(comp_set_text),
+    ESP_ELFSYM_EXPORT(comp_close),
+
+    /* duo — dual-display cooperation toolkit (e-ink main + OLED active) */
+    ESP_ELFSYM_EXPORT(duo_open),
+    ESP_ELFSYM_EXPORT(duo_close),
+    ESP_ELFSYM_EXPORT(duo_menu),
+    ESP_ELFSYM_EXPORT(duo_value),
+    ESP_ELFSYM_EXPORT(duo_message),
+    ESP_ELFSYM_EXPORT(duo_eink_fb),
+    ESP_ELFSYM_EXPORT(duo_oled_fb),
+    ESP_ELFSYM_EXPORT(duo_eink_w),
+    ESP_ELFSYM_EXPORT(duo_eink_h),
+    ESP_ELFSYM_EXPORT(duo_eink_commit),
+    ESP_ELFSYM_EXPORT(duo_oled_commit),
+
+    /* UI widget toolkit */
+    ESP_ELFSYM_EXPORT(ui_create),
+    ESP_ELFSYM_EXPORT(ui_destroy),
+    ESP_ELFSYM_EXPORT(ui_add_label),
+    ESP_ELFSYM_EXPORT(ui_add_choice),
+    ESP_ELFSYM_EXPORT(ui_add_button),
+    ESP_ELFSYM_EXPORT(ui_choice_get),
+    ESP_ELFSYM_EXPORT(ui_render),
+    ESP_ELFSYM_EXPORT(ui_handle_key),
     ESP_ELFSYM_EXPORT(display_mux_grab),
     ESP_ELFSYM_EXPORT(display_mux_release),
     ESP_ELFSYM_EXPORT(gpio_config),
@@ -93,11 +128,16 @@ static const struct esp_elfsym s_symtab[] = {
     ESP_ELFSYM_EXPORT(gfx_set_pixel),
     ESP_ELFSYM_EXPORT(gfx_get_pixel),
     ESP_ELFSYM_EXPORT(gfx_fill_rect),
+    ESP_ELFSYM_EXPORT(gfx_draw_rect),
+    ESP_ELFSYM_EXPORT(gfx_draw_line),
+    ESP_ELFSYM_EXPORT(gfx_draw_circle),
     ESP_ELFSYM_EXPORT(gfx_copy_rect),
     ESP_ELFSYM_EXPORT(gfx_blit_masked),
     ESP_ELFSYM_EXPORT(gfx_font_get),
     ESP_ELFSYM_EXPORT(gfx_draw_char),
     ESP_ELFSYM_EXPORT(gfx_draw_text),
+    ESP_ELFSYM_EXPORT(gfx_draw_char_scaled),
+    ESP_ELFSYM_EXPORT(gfx_draw_text_scaled),
 
     /* Input service — for input-source drivers (CardKB) */
     ESP_ELFSYM_EXPORT(input_push_key),
@@ -106,6 +146,7 @@ static const struct esp_elfsym s_symtab[] = {
     /* App runtime — for a launcher app that browses/runs other apps */
     ESP_ELFSYM_EXPORT(app_run),
     ESP_ELFSYM_EXPORT(app_list),
+    ESP_ELFSYM_EXPORT(session_spawn),   /* launch an app as a background task */
     ESP_ELFSYM_EXPORT(app_read_file),
     ESP_ELFSYM_EXPORT(app_write_file),
 

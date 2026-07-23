@@ -154,6 +154,58 @@ void gfx_fill_rect(gfx_fb_t *fb, int x, int y, int w, int h, uint32_t color)
             gfx_set_pixel(fb, col, row, color);
 }
 
+// Rectangle outline (1px), thickness `t`.
+void gfx_draw_rect(gfx_fb_t *fb, int x, int y, int w, int h, int t, uint32_t color)
+{
+    if (!fb || w <= 0 || h <= 0) return;
+    if (t < 1) t = 1;
+    gfx_fill_rect(fb, x,             y,             w, t, color);   // top
+    gfx_fill_rect(fb, x,             y + h - t,     w, t, color);   // bottom
+    gfx_fill_rect(fb, x,             y,             t, h, color);   // left
+    gfx_fill_rect(fb, x + w - t,     y,             t, h, color);   // right
+}
+
+// Bresenham line.
+void gfx_draw_line(gfx_fb_t *fb, int x0, int y0, int x1, int y1, uint32_t color)
+{
+    if (!fb) return;
+    int dx = x1 - x0, dy = y1 - y0;
+    int sx = dx < 0 ? -1 : 1, sy = dy < 0 ? -1 : 1;
+    if (dx < 0) dx = -dx;
+    if (dy < 0) dy = -dy;
+    int err = (dx > dy ? dx : -dy) / 2;
+    for (;;) {
+        gfx_set_pixel(fb, x0, y0, color);
+        if (x0 == x1 && y0 == y1) break;
+        int e2 = err;
+        if (e2 > -dx) { err -= dy; x0 += sx; }
+        if (e2 <  dy) { err += dx; y0 += sy; }
+    }
+}
+
+// Circle outline (midpoint). `fill` != 0 draws a filled disc.
+void gfx_draw_circle(gfx_fb_t *fb, int cx, int cy, int r, int fill, uint32_t color)
+{
+    if (!fb || r < 0) return;
+    int x = r, y = 0, err = 1 - r;
+    while (x >= y) {
+        if (fill) {
+            gfx_fill_rect(fb, cx - x, cy + y, 2 * x + 1, 1, color);
+            gfx_fill_rect(fb, cx - x, cy - y, 2 * x + 1, 1, color);
+            gfx_fill_rect(fb, cx - y, cy + x, 2 * y + 1, 1, color);
+            gfx_fill_rect(fb, cx - y, cy - x, 2 * y + 1, 1, color);
+        } else {
+            gfx_set_pixel(fb, cx + x, cy + y, color); gfx_set_pixel(fb, cx - x, cy + y, color);
+            gfx_set_pixel(fb, cx + x, cy - y, color); gfx_set_pixel(fb, cx - x, cy - y, color);
+            gfx_set_pixel(fb, cx + y, cy + x, color); gfx_set_pixel(fb, cx - y, cy + x, color);
+            gfx_set_pixel(fb, cx + y, cy - x, color); gfx_set_pixel(fb, cx - y, cy - x, color);
+        }
+        y++;
+        if (err < 0) err += 2 * y + 1;
+        else { x--; err += 2 * (y - x) + 1; }
+    }
+}
+
 void gfx_copy_rect(gfx_fb_t *dst, int dx, int dy,
                    const gfx_fb_t *src, int sx, int sy, int w, int h)
 {

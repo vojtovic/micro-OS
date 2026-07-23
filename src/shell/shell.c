@@ -15,6 +15,9 @@
 #include "services/vconsole.h"
 #include "services/init.h"
 #include "services/hwconf.h"
+#include "services/session.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "hal/storage.h"
 #include "esp_console.h"
 #include "esp_log.h"
@@ -355,6 +358,10 @@ esp_err_t shell_init(void)
     ret = cmd_hwconf_register();
     if (ret != ESP_OK) return ret;
 
+    // Session / multitasking commands (spawn, apps, sw)
+    ret = cmd_session_register();
+    if (ret != ESP_OK) return ret;
+
     // Module management commands (modload, lsmod, etc.)
     ret = cmd_module_register();
     if (ret != ESP_OK) return ret;
@@ -406,6 +413,10 @@ static int shell_read_line(char *buf, size_t buf_size)
 
 void shell_start(void)
 {
+    // Register this task with the session manager so the focus ring can switch
+    // between the shell and spawned apps (TAB / `sw`).
+    session_set_shell(xTaskGetCurrentTaskHandle());
+
     vconsole_printf("\n========================================\n");
     vconsole_printf("  micro_arch v0.2.0\n");
     vconsole_printf("  Type 'help' for available commands\n");

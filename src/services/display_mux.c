@@ -106,6 +106,40 @@ esp_err_t display_mux_refresh(const char *name)
     return ret;
 }
 
+// Force the console onto the FAST displays (OLED) even if grabbed. Used when a
+// GUI app loses focus back to the shell, so a paused app's frozen frame is
+// replaced by the console instead of hanging. Skips slow (e-ink) displays.
+bool display_mux_is_fast(const char *name)
+{
+    if (!name) return false;
+    bool fast = false;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    display_slot_t *d = find_name(name);
+    if (d && d->ops->get_caps)
+        fast = (d->ops->get_caps() & DISPLAY_CAP_FAST_REFRESH) != 0;
+    xSemaphoreGive(s_lock);
+    return fast;
+}
+
+esp_err_t display_mux_refresh_fast(void)
+{
+    char *buf = heap_caps_malloc(MUX_LINE_BUF, MALLOC_CAP_SPIRAM);
+    if (!buf) return ESP_ERR_NO_MEM;
+
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    for (int i = 0; i < DISPLAY_MUX_MAX_DRIVERS; i++) {
+        display_slot_t *d = &s_drivers[i];
+        if (!d->active) continue;
+        uint32_t caps = d->ops->get_caps ? d->ops->get_caps() : 0;
+        if (!(caps & DISPLAY_CAP_FAST_REFRESH)) continue;   // OLED only, not e-ink
+        render_slot(d, buf);
+    }
+    xSemaphoreGive(s_lock);
+
+    heap_caps_free(buf);
+    return ESP_OK;
+}
+
 esp_err_t display_mux_present(const char *name, const struct gfx_fb *fb)
 {
     if (!name || !fb) return ESP_ERR_INVALID_ARG;

@@ -163,3 +163,45 @@ int gfx_draw_text(gfx_fb_t *fb, int x, int y, const char *s,
     }
     return cx - x;
 }
+
+// Scaled variants: each glyph pixel becomes a scale x scale block, so the same
+// built-in font renders larger (blocky but readable) — handy on the big e-ink.
+int gfx_draw_char_scaled(gfx_fb_t *fb, int x, int y, char c,
+                         const gfx_font_t *f, uint32_t color, int scale)
+{
+    if (!fb || !f) return 0;
+    if (scale < 1) scale = 1;
+
+    uint8_t uc = (uint8_t)c;
+    if (uc < f->first || uc >= (uint8_t)(f->first + f->count)) uc = ' ';
+    const uint8_t *g = &f->glyphs[(uc - f->first) * f->gw];
+
+    for (int col = 0; col < f->gw; col++) {
+        uint8_t bits = g[col];
+        for (int row = 0; row < f->gh; row++) {
+            if (!(bits & (1u << row))) continue;
+            for (int dy = 0; dy < scale; dy++)
+                for (int dx = 0; dx < scale; dx++)
+                    gfx_set_pixel(fb, x + col * scale + dx, y + row * scale + dy, color);
+        }
+    }
+    return f->advance * scale;
+}
+
+int gfx_draw_text_scaled(gfx_fb_t *fb, int x, int y, const char *s,
+                         const gfx_font_t *f, uint32_t color, int scale)
+{
+    if (!fb || !f || !s) return 0;
+    if (scale < 1) scale = 1;
+
+    int cx = x, cy = y;
+    for (; *s; s++) {
+        if (*s == '\n') {
+            cx = x;
+            cy += (f->gh + 1) * scale;
+            continue;
+        }
+        cx += gfx_draw_char_scaled(fb, cx, cy, *s, f, color, scale);
+    }
+    return cx - x;
+}

@@ -3,6 +3,8 @@
 #include "hal/storage.h"
 #include "hal/internal_fs.h"
 #include "services/klog.h"
+#include "services/registry.h"
+#include "services/rtc_service.h"
 #include "esp_console.h"
 #include "esp_log.h"
 #include "esp_system.h"
@@ -42,9 +44,63 @@ static int cmd_uptime(int argc, char **argv)
     return 0;
 }
 
+static int cmd_date_parse(const char *s, int *out)
+{
+    int v = 0, any = 0;
+    while (*s >= '0' && *s <= '9') { v = v * 10 + (*s - '0'); s++; any = 1; }
+    if (!any || *s) return -1;
+    *out = v;
+    return 0;
+}
+
 static int cmd_date(int argc, char **argv)
 {
-    vconsole_printf("RTC not configured (install rtc driver module)\n");
+    const rtc_ops_t *rtc = (const rtc_ops_t *)registry_vtable(RTC_SERVICE_NAME);
+    if (!rtc) {
+        vconsole_printf("date: no RTC service — run 'modstart rtc' first\n");
+        return 0;
+    }
+
+    if (argc >= 2 && strcmp(argv[1], "set") == 0) {
+        if (argc < 8) {
+            vconsole_printf("Usage: date set YYYY MM DD HH MM SS\n");
+            return 0;
+        }
+        int y, mo, d, h, mi, s;
+        if (cmd_date_parse(argv[2], &y)  || cmd_date_parse(argv[3], &mo) ||
+            cmd_date_parse(argv[4], &d)  || cmd_date_parse(argv[5], &h)  ||
+            cmd_date_parse(argv[6], &mi) || cmd_date_parse(argv[7], &s)) {
+            vconsole_printf("date: bad number\n");
+            return 0;
+        }
+        if (y < 2000 || y > 2099 || mo < 1 || mo > 12 || d < 1 || d > 31 ||
+            h > 23 || mi > 59 || s > 59) {
+            vconsole_printf("date: value out of range\n");
+            return 0;
+        }
+        rtc_time_t t = { (uint16_t)y, (uint8_t)mo, (uint8_t)d,
+                         (uint8_t)h, (uint8_t)mi, (uint8_t)s, 0 };
+        if (rtc->set(&t) != 0) vconsole_printf("date: RTC write failed\n");
+        else vconsole_printf("date: set to %04d-%02d-%02d %02d:%02d:%02d\n",
+                             y, mo, d, h, mi, s);
+        return 0;
+    }
+
+    rtc_time_t t;
+    if (rtc->get(&t) != 0) {
+        vconsole_printf("date: RTC read failed\n");
+        return 0;
+    }
+    static const char *wd[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+    vconsole_printf("%s %04d-%02d-%02d %02d:%02d:%02d",
+                    wd[t.wday & 7], t.year, t.month, t.day, t.hour, t.min, t.sec);
+    int c100;
+    if (rtc->temp_c100 && rtc->temp_c100(&c100) == 0) {
+        int w = c100 / 100, f = c100 % 100;
+        if (f < 0) f = -f;
+        vconsole_printf("   %d.%02d C", w, f);
+    }
+    vconsole_printf("\n");
     return 0;
 }
 

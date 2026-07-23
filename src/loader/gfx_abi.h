@@ -48,6 +48,9 @@ uint32_t gfx_get_pixel(const gfx_fb_t *fb, int x, int y);
 
 /* Region — clipped to fb bounds. Word-aligned inner loops where format permits. */
 void gfx_fill_rect (gfx_fb_t *fb, int x, int y, int w, int h, uint32_t color);
+void gfx_draw_rect (gfx_fb_t *fb, int x, int y, int w, int h, int t, uint32_t color);
+void gfx_draw_line (gfx_fb_t *fb, int x0, int y0, int x1, int y1, uint32_t color);
+void gfx_draw_circle(gfx_fb_t *fb, int cx, int cy, int r, int fill, uint32_t color);
 void gfx_copy_rect (gfx_fb_t *dst, int dx, int dy,
                     const gfx_fb_t *src, int sx, int sy, int w, int h);
 void gfx_blit_masked(gfx_fb_t *dst, int dx, int dy,
@@ -70,6 +73,13 @@ int gfx_draw_char(gfx_fb_t *fb, int x, int y, char c,
 /* Draw a string ('\n' starts a new line); returns width of the last line. */
 int gfx_draw_text(gfx_fb_t *fb, int x, int y, const char *s,
                   const gfx_font_t *f, uint32_t color);
+
+/* Scaled text: each glyph pixel becomes a scale x scale block (bigger, blocky).
+ * scale 1 == gfx_draw_char/gfx_draw_text. Advance and line height scale too. */
+int gfx_draw_char_scaled(gfx_fb_t *fb, int x, int y, char c,
+                         const gfx_font_t *f, uint32_t color, int scale);
+int gfx_draw_text_scaled(gfx_fb_t *fb, int x, int y, const char *s,
+                         const gfx_font_t *f, uint32_t color, int scale);
 
 #ifdef __cplusplus
 }
