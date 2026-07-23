@@ -28,7 +28,7 @@ extern int    duo_eink_h(duo_t *d);
 extern void   duo_eink_commit(duo_t *d);
 extern void   duo_oled_commit(duo_t *d);
 
-#define CONF_PATH "/sdcard/etc/hardware.conf"
+#define CONF_PATH "/sys/etc/hardware.conf"
 
 typedef struct {
     const char        *name;

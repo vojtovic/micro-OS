@@ -13,7 +13,7 @@
 // The getters lazy-load on first use, so modules can query without caring about
 // boot order. hwconf_load() forces a (re)parse, e.g. after editing the file.
 
-#define HWCONF_PATH  "/sdcard/etc/hardware.conf"
+#define HWCONF_PATH  "/sys/etc/hardware.conf"
 
 // (Re)parse the config file into memory. Returns ESP_OK even when the file is
 // absent — in that case every lookup returns its supplied default.

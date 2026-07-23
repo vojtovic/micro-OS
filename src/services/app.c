@@ -69,6 +69,38 @@ int app_list(char (*names)[APP_NAME_MAX], int max)
     return n;
 }
 
+int app_list_dir(const char *path, char (*names)[FS_NAME_MAX], uint8_t *is_dir, int max)
+{
+    if (!path || !names || !is_dir || max <= 0) return -1;
+    DIR *dir = opendir(path);
+    if (!dir) return -1;
+
+    int n = 0;
+    struct dirent *e;
+    char full[256];
+    while (n < max && (e = readdir(dir)) != NULL) {
+        if (e->d_name[0] == '.' &&
+            (e->d_name[1] == '\0' || (e->d_name[1] == '.' && e->d_name[2] == '\0')))
+            continue;                                  // skip "." and ".."
+        strncpy(names[n], e->d_name, FS_NAME_MAX - 1);
+        names[n][FS_NAME_MAX - 1] = '\0';
+
+        size_t pl = strlen(path), dl = strlen(e->d_name);
+        if (pl + 1 + dl < sizeof(full)) {              // build "<path>/<name>"
+            memcpy(full, path, pl);
+            full[pl] = '/';
+            memcpy(full + pl + 1, e->d_name, dl + 1);
+            struct stat st;
+            is_dir[n] = (stat(full, &st) == 0 && S_ISDIR(st.st_mode)) ? 1 : 0;
+        } else {
+            is_dir[n] = 0;
+        }
+        n++;
+    }
+    closedir(dir);
+    return n;
+}
+
 int app_read_file(const char *path, char *buf, int max)
 {
     if (!path || !buf || max <= 0) return -1;

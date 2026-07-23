@@ -411,6 +411,26 @@ static int shell_read_line(char *buf, size_t buf_size)
     return i;
 }
 
+int shell_exec(const char *line)
+{
+    if (!line || !*line) return -1;
+    int ret = 0;
+    esp_err_t err = esp_console_run(line, &ret);
+    if (err == ESP_ERR_NOT_FOUND) {
+        // Not a built-in — try the app_run fallback (type-name-to-run).
+        char split[256];
+        strncpy(split, line, sizeof(split) - 1);
+        split[sizeof(split) - 1] = '\0';
+        char *argv[16];
+        int argc = esp_console_split_argv(split, argv, 16);
+        if (argc <= 0 || app_run(argv[0], argc, argv) == APP_NOT_FOUND)
+            return -1;
+        return 0;
+    }
+    if (err != ESP_OK && err != ESP_ERR_INVALID_ARG) return -1;
+    return ret;
+}
+
 void shell_start(void)
 {
     // Register this task with the session manager so the focus ring can switch

@@ -71,9 +71,11 @@ void app_main(void)
         ESP_LOGW(TAG, "/sys mount failed — running without internal storage");
     }
 
-    // Create default fstab on first boot (needs /sys mounted)
+    // Create default fstab + config on the internal flash (needs /sys mounted).
+    // Config lives here (not on the SD) so it persists without the card.
     if (sys_err == ESP_OK) {
         init_create_default_fstab();
+        init_config();
     }
 
     // Bus init (SD SPI + I2C — display buses are loaded by modules)

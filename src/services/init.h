@@ -19,6 +19,7 @@ typedef struct {
     int           count;
 } fstab_t;
 
+esp_err_t init_config(void);        // create /sys/etc config on internal flash
 esp_err_t init_filesystem(void);
 esp_err_t init_run_bootscript(void);
 void      init_boot_beep(void);

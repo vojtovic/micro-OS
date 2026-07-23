@@ -16,7 +16,7 @@ STRIP_FLAGS = --strip-unneeded \
               --remove-section=.xt.prop \
               --remove-section=.xtensa.info
 
-MODULES = hello badabi oled eink cardkb demo launcher edit gfxdemo desktop menu rtc date settings nerv
+MODULES = hello badabi oled eink cardkb demo launcher edit gfxdemo desktop menu rtc date settings nerv home files
 
 .PHONY: all clean
 

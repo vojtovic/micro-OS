@@ -13,6 +13,7 @@
 #include "services/session.h"
 #include "services/ui.h"
 #include "services/duo.h"
+#include "shell/shell.h"
 #include "services/dma_service.h"
 #include "bus/bus_manager.h"
 #include "services/display_mux.h"
@@ -147,8 +148,10 @@ static const struct esp_elfsym s_symtab[] = {
     ESP_ELFSYM_EXPORT(app_run),
     ESP_ELFSYM_EXPORT(app_list),
     ESP_ELFSYM_EXPORT(session_spawn),   /* launch an app as a background task */
+    ESP_ELFSYM_EXPORT(shell_exec),      /* run any console command from a GUI app */
     ESP_ELFSYM_EXPORT(app_read_file),
     ESP_ELFSYM_EXPORT(app_write_file),
+    ESP_ELFSYM_EXPORT(app_list_dir),
 
     /* I2C bus access — for input-source drivers (CardKB at 0x5F) */
     ESP_ELFSYM_EXPORT(bus_i2c_read),

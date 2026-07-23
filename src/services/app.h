@@ -1,6 +1,8 @@
 #ifndef APP_H
 #define APP_H
 
+#include <stdint.h>
+
 // Foreground application runtime.
 //
 // Apps are downloadable ELF binaries in /sdcard/bin/<name>.elf (the same PATH
@@ -27,5 +29,11 @@ int app_list(char (*names)[APP_NAME_MAX], int max);
 // `len` bytes of `buf` to `path`, truncating (returns 0 on success, -1 on err).
 int app_read_file (const char *path, char *buf, int max);
 int app_write_file(const char *path, const char *buf, int len);
+
+// Directory listing for a file browser: fills up to `max` entry names (48-char
+// buffers) from `path`, sets is_dir[i] (1 = directory). Skips "." and "..".
+// Returns the count, or -1 if the directory can't be opened.
+#define FS_NAME_MAX  48
+int app_list_dir(const char *path, char (*names)[FS_NAME_MAX], uint8_t *is_dir, int max);
 
 #endif

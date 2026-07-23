@@ -40,20 +40,14 @@ static void ensure_file(const char *path, const char *content)
     ESP_LOGI(TAG, "Created: %s", path);
 }
 
-esp_err_t init_filesystem(void)
+// Config lives on the internal flash (/sys/etc, LittleFS) so it persists on the
+// device and survives without the SD card — no re-uploading config to the card.
+// User data (/sdcard/home) and packages (drivers/apps) stay on the SD.
+esp_err_t init_config(void)
 {
-    struct stat st;
-    bool first_boot = (stat("/sdcard/etc", &st) != 0);
+    ensure_dir("/sys/etc");
 
-    ensure_dir("/sdcard/bin");
-    ensure_dir("/sdcard/drivers");
-    ensure_dir("/sdcard/etc");
-    ensure_dir("/sdcard/home");
-    ensure_dir("/sdcard/tmp");
-    ensure_dir("/sdcard/var");
-    ensure_dir("/sdcard/var/log");
-
-    ensure_file("/sdcard/etc/hardware.conf",
+    ensure_file("/sys/etc/hardware.conf",
         "# Hardware pin configuration\n"
         "# Loaded by driver modules at runtime\n"
         "\n"
@@ -80,9 +74,9 @@ esp_err_t init_filesystem(void)
         "pin=4\n"
     );
 
-    ensure_file("/sdcard/etc/hostname", "micro_arch\n");
+    ensure_file("/sys/etc/hostname", "micro_arch\n");
 
-    ensure_file("/sdcard/etc/init.conf",
+    ensure_file("/sys/etc/init.conf",
         "# init.conf — boot script, executed line-by-line on startup.\n"
         "#\n"
         "# Each non-comment line is run like a shell prompt: first a built-in\n"
@@ -97,17 +91,33 @@ esp_err_t init_filesystem(void)
         "# gfxdemo                         # launch the graphics demo\n"
     );
 
+    ESP_LOGI(TAG, "Config ready in /sys/etc");
+    return ESP_OK;
+}
+
+esp_err_t init_filesystem(void)
+{
+    struct stat st;
+    bool first_boot = (stat("/sdcard/bin", &st) != 0);
+
+    ensure_dir("/sdcard/bin");
+    ensure_dir("/sdcard/drivers");
+    ensure_dir("/sdcard/home");
+    ensure_dir("/sdcard/tmp");
+    ensure_dir("/sdcard/var");
+    ensure_dir("/sdcard/var/log");
+
     if (first_boot) {
-        ESP_LOGI(TAG, "First boot: filesystem hierarchy created");
+        ESP_LOGI(TAG, "First boot: SD hierarchy created");
     } else {
-        ESP_LOGI(TAG, "Filesystem hierarchy OK");
+        ESP_LOGI(TAG, "SD hierarchy OK");
     }
     return ESP_OK;
 }
 
 esp_err_t init_run_bootscript(void)
 {
-    FILE *f = fopen("/sdcard/etc/init.conf", "r");
+    FILE *f = fopen("/sys/etc/init.conf", "r");
     if (!f) {
         ESP_LOGI(TAG, "No init.conf found — skipping");
         return ESP_OK;
