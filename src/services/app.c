@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <unistd.h>
 
 static const char *TAG = "app";
 
@@ -99,6 +100,38 @@ int app_list_dir(const char *path, char (*names)[FS_NAME_MAX], uint8_t *is_dir, 
     }
     closedir(dir);
     return n;
+}
+
+int app_mkdir(const char *path)
+{
+    if (!path) return -1;
+    struct stat st;
+    if (stat(path, &st) == 0) return S_ISDIR(st.st_mode) ? 0 : -1;   // already exists
+    return mkdir(path, 0755) == 0 ? 0 : -1;
+}
+
+int app_delete(const char *path)
+{
+    if (!path) return -1;
+    struct stat st;
+    if (stat(path, &st) != 0) return -1;
+    return ((S_ISDIR(st.st_mode) ? rmdir(path) : unlink(path)) == 0) ? 0 : -1;
+}
+
+int app_rename(const char *from, const char *to)
+{
+    if (!from || !to) return -1;
+    return rename(from, to) == 0 ? 0 : -1;
+}
+
+int app_stat(const char *path, int *is_dir, long *size)
+{
+    if (!path) return -1;
+    struct stat st;
+    if (stat(path, &st) != 0) return -1;
+    if (is_dir) *is_dir = S_ISDIR(st.st_mode) ? 1 : 0;
+    if (size)   *size   = (long)st.st_size;
+    return 0;
 }
 
 int app_read_file(const char *path, char *buf, int max)

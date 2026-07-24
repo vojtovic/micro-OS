@@ -205,3 +205,47 @@ int gfx_draw_text_scaled(gfx_fb_t *fb, int x, int y, const char *s,
     }
     return cx - x;
 }
+
+// Word-wrapped text into a box (x,y,w,h): wraps words at spaces to width `w`,
+// hard-splits words longer than a line, honours '\n', and draws only the lines
+// in [first_line, first_line + h/lineheight) — so callers scroll by first_line.
+// Returns the TOTAL number of wrapped lines (for scroll bounds).
+int gfx_draw_text_wrapped(gfx_fb_t *fb, int x, int y, int w, int h,
+                          const char *s, const gfx_font_t *f, uint32_t color,
+                          int scale, int first_line)
+{
+    if (!f || !s) return 0;
+    if (scale < 1) scale = 1;
+
+    int adv = f->advance * scale; if (adv < 1) adv = 1;
+    int lh  = (f->gh + 1) * scale; if (lh < 1)  lh = 1;
+    int maxcols = w / adv;   if (maxcols < 1) maxcols = 1;
+    int visible = h / lh;    if (visible < 1) visible = 1;
+
+    int line = 0, col = 0;
+    const char *p = s;
+    while (*p) {
+        if (*p == '\n') { line++; col = 0; p++; continue; }
+
+        int wlen = 0;                                   // measure the next word
+        while (p[wlen] && p[wlen] != ' ' && p[wlen] != '\n') wlen++;
+
+        if (col > 0 && col + wlen > maxcols) { line++; col = 0; }   // wrap whole word
+
+        for (int i = 0; i < wlen; i++) {
+            if (col >= maxcols) { line++; col = 0; }    // hard-split long words
+            if (fb && line >= first_line && (line - first_line) < visible)
+                gfx_draw_char_scaled(fb, x + col * adv,
+                                     y + (line - first_line) * lh, p[i], f, color, scale);
+            col++;
+        }
+        p += wlen;
+
+        if (*p == ' ') {                                // the trailing space
+            col++;
+            if (col >= maxcols) { line++; col = 0; }
+            p++;
+        }
+    }
+    return line + 1;
+}

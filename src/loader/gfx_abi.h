@@ -81,6 +81,12 @@ int gfx_draw_char_scaled(gfx_fb_t *fb, int x, int y, char c,
 int gfx_draw_text_scaled(gfx_fb_t *fb, int x, int y, const char *s,
                          const gfx_font_t *f, uint32_t color, int scale);
 
+/* Word-wrapped text into a box; draws lines [first_line, first_line+h/lh); returns
+ * the total wrapped line count (for scrolling). Pass fb=NULL to just count lines. */
+int gfx_draw_text_wrapped(gfx_fb_t *fb, int x, int y, int w, int h,
+                          const char *s, const gfx_font_t *f, uint32_t color,
+                          int scale, int first_line);
+
 #ifdef __cplusplus
 }
 #endif

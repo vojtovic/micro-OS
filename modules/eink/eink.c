@@ -445,9 +445,10 @@ static void epd_draw_char(int col, int row, char c)
 static void eink_commit(void)
 {
     // (Inline compare — memcmp is not in the kernel symbol table.)
-    int y0 = EPD_HEIGHT, y1 = -1;
+    int y0 = EPD_HEIGHT, y1 = -1, diff = 0;
     for (int i = 0; i < EPD_BUF_SIZE; i++) {
         if (s_framebuf[i] != s_oldbuf[i]) {
+            diff++;
             int row = i / EPD_STRIDE;
             if (row < y0) y0 = row;
             if (row > y1) y1 = row;
@@ -455,9 +456,13 @@ static void eink_commit(void)
     }
     if (y1 < 0) return;   // nothing changed
 
-    // Force a full GC refresh periodically to wipe accumulated ghosting;
-    // otherwise refresh only the changed band (partial) or full frame (DU).
-    bool full = (s_partial_count >= GHOSTING_LIMIT);
+    // Force a full GC refresh (clean black/white flash, no ghosting) when either
+    // the ghosting counter tripped OR a large fraction of the screen changed —
+    // the latter catches whole-screen transitions (opening home, switching
+    // pages) so they come up crisp, while small updates (a ticking clock) still
+    // use the fast partial/DU path.
+    bool full = (s_partial_count >= GHOSTING_LIMIT) ||
+                (diff > EPD_BUF_SIZE * 2 / 5);
 #if EINK_PARTIAL
     if (full) {
         epd_update(s_framebuf, true);

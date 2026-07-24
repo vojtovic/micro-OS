@@ -19,6 +19,7 @@
 #include "services/display_mux.h"
 #include "services/wifi.h"
 #include "services/http_client.h"
+#include "services/json_svc.h"
 
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
@@ -91,10 +92,25 @@ static const struct esp_elfsym s_symtab[] = {
     ESP_ELFSYM_EXPORT(http_download_file),
     ESP_ELFSYM_EXPORT(http_get),
     ESP_ELFSYM_EXPORT(http_response_free),
+    ESP_ELFSYM_EXPORT(http_fetch),
+    ESP_ELFSYM_EXPORT(http_free),
+
+    /* JSON (module-safe wrapper over cJSON) — for API apps / weather */
+    ESP_ELFSYM_EXPORT(json_parse),
+    ESP_ELFSYM_EXPORT(json_free),
+    ESP_ELFSYM_EXPORT(json_get),
+    ESP_ELFSYM_EXPORT(json_at),
+    ESP_ELFSYM_EXPORT(json_len),
+    ESP_ELFSYM_EXPORT(json_str),
+    ESP_ELFSYM_EXPORT(json_num),
+    ESP_ELFSYM_EXPORT(json_get_str),
+    ESP_ELFSYM_EXPORT(json_get_num),
+    ESP_ELFSYM_EXPORT(json_get_int),
     ESP_ELFSYM_EXPORT(heap_caps_free),
     ESP_ELFSYM_EXPORT(heap_caps_malloc),
     ESP_ELFSYM_EXPORT(memcpy),
     ESP_ELFSYM_EXPORT(memmove),
+    ESP_ELFSYM_EXPORT(memcmp),
     ESP_ELFSYM_EXPORT(memset),
     ESP_ELFSYM_EXPORT(module_register),
     ESP_ELFSYM_EXPORT(printf),
@@ -139,6 +155,7 @@ static const struct esp_elfsym s_symtab[] = {
     ESP_ELFSYM_EXPORT(gfx_draw_text),
     ESP_ELFSYM_EXPORT(gfx_draw_char_scaled),
     ESP_ELFSYM_EXPORT(gfx_draw_text_scaled),
+    ESP_ELFSYM_EXPORT(gfx_draw_text_wrapped),
 
     /* Input service — for input-source drivers (CardKB) */
     ESP_ELFSYM_EXPORT(input_push_key),
@@ -152,6 +169,10 @@ static const struct esp_elfsym s_symtab[] = {
     ESP_ELFSYM_EXPORT(app_read_file),
     ESP_ELFSYM_EXPORT(app_write_file),
     ESP_ELFSYM_EXPORT(app_list_dir),
+    ESP_ELFSYM_EXPORT(app_mkdir),
+    ESP_ELFSYM_EXPORT(app_delete),
+    ESP_ELFSYM_EXPORT(app_rename),
+    ESP_ELFSYM_EXPORT(app_stat),
 
     /* I2C bus access — for input-source drivers (CardKB at 0x5F) */
     ESP_ELFSYM_EXPORT(bus_i2c_read),

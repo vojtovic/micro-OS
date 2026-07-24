@@ -36,4 +36,13 @@ int app_write_file(const char *path, const char *buf, int len);
 #define FS_NAME_MAX  48
 int app_list_dir(const char *path, char (*names)[FS_NAME_MAX], uint8_t *is_dir, int max);
 
+// File management helpers (all return 0 on success, -1 on failure). mkdir is a
+// no-op-OK if the directory already exists. delete removes a file or an empty
+// directory. stat fills is_dir (1 = directory) and size (bytes) if non-NULL, and
+// returns -1 if the path does not exist.
+int app_mkdir (const char *path);
+int app_delete(const char *path);
+int app_rename(const char *from, const char *to);
+int app_stat  (const char *path, int *is_dir, long *size);
+
 #endif

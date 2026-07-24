@@ -1,5 +1,6 @@
 #include "http_client.h"
 #include "esp_http_client.h"
+#include "esp_crt_bundle.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_task_wdt.h"
@@ -21,6 +22,7 @@ esp_err_t http_get(const char *url, http_response_t *response)
     esp_http_client_config_t config = {
         .url = url,
         .timeout_ms = 10000,
+        .crt_bundle_attach = esp_crt_bundle_attach,   // trust the ESP-IDF CA bundle (HTTPS)
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -89,6 +91,7 @@ esp_err_t http_download_file(const char *url, const char *dest_path)
     esp_http_client_config_t config = {
         .url = url,
         .timeout_ms = 30000,
+        .crt_bundle_attach = esp_crt_bundle_attach,   // HTTPS
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
@@ -168,4 +171,17 @@ void http_response_free(http_response_t *response)
         response->body = NULL;
     }
     response->body_len = 0;
+}
+
+char *http_fetch(const char *url, int *out_len)
+{
+    http_response_t r;
+    if (http_get(url, &r) != ESP_OK) return NULL;
+    if (out_len) *out_len = (int)r.body_len;
+    return r.body;                                  // caller frees via http_free
+}
+
+void http_free(char *body)
+{
+    if (body) heap_caps_free(body);
 }

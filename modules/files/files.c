@@ -149,12 +149,19 @@ static void open_sel(void)
         app_run(full, 1, av);                          // returns here on exit
         refresh(1);
     } else {
-        viewlen = app_read_file(full, viewbuf, sizeof(viewbuf) - 1);
-        if (viewlen < 0) viewlen = 0;
-        viewbuf[viewlen] = '\0';
-        view_line = 0;
-        mode = MODE_VIEW;
-        draw_view();
+        // Text file: open in the editor; fall back to the inline viewer if the
+        // editor app isn't installed.
+        char *av[2] = { "editor", full };
+        if (app_run("editor", 2, av) == -1000) {       // APP_NOT_FOUND
+            viewlen = app_read_file(full, viewbuf, sizeof(viewbuf) - 1);
+            if (viewlen < 0) viewlen = 0;
+            viewbuf[viewlen] = '\0';
+            view_line = 0;
+            mode = MODE_VIEW;
+            draw_view();
+        } else {
+            refresh(1);
+        }
     }
 }
 
