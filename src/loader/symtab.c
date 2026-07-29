@@ -126,6 +126,7 @@ static const struct esp_elfsym s_symtab[] = {
     ESP_ELFSYM_EXPORT(strcmp),
     ESP_ELFSYM_EXPORT(strncmp),
     ESP_ELFSYM_EXPORT(strchr),
+    ESP_ELFSYM_EXPORT(strrchr),
     ESP_ELFSYM_EXPORT(vTaskDelay),
     ESP_ELFSYM_EXPORT(vTaskDelete),
     ESP_ELFSYM_EXPORT(vconsole_printf),

@@ -37,8 +37,8 @@ extern int    duo_eink_w(duo_t *d);
 extern int    duo_eink_h(duo_t *d);
 extern void   duo_eink_commit(duo_t *d);
 
-#define LOCATION "Prague, CZ"
-#define URL "https://api.open-meteo.com/v1/forecast?latitude=50.08&longitude=14.44" \
+#define LOCATION "Opava, CZ"
+#define URL "https://api.open-meteo.com/v1/forecast?latitude=49.94&longitude=17.90" \
             "&current=temperature_2m,weather_code,wind_speed_10m"
 
 static duo_t            *d;

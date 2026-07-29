@@ -28,6 +28,8 @@ extern void *registry_vtable(const char *name);
 
 // The weather app caches its last reading here (temp_tenths;code;wind_tenths;loc).
 #define WEATHER_CACHE "/sys/cache/weather.txt"
+// The todo app stores tasks here ("<0|1> text" per line); the todo widget reads it.
+#define TODO_PATH "/sdcard/home/todo.txt"
 
 typedef struct duo duo_t;
 extern duo_t *duo_open(void);
@@ -49,7 +51,7 @@ static int  napps;
 static duo_t            *d;
 static gfx_fb_t         *efb, *ofb;
 static const gfx_font_t *font;
-static int  ew, eh, page = PAGE_HOME, sel = 0, scroll = 0, last_min = -1;
+static int  ew, eh, page = PAGE_HOME, sel = 0, scroll = 0, last_min = -1, boot_redraws = 2;
 
 static const char *const WD[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
 
@@ -103,53 +105,136 @@ static void bevel(gfx_fb_t *fb, int x, int y, int w, int h, int cut)
     gfx_draw_line(fb, r - cut, b, r, b - cut, 1);
 }
 
+// ---- weather icon (drawn from a weather code) ----------------------------
+static void draw_sun(int cx, int cy, int r)
+{
+    gfx_draw_circle(efb, cx, cy, r, 0, 1);
+    static const int dx[] = { 1, 1, 0, -1, -1, -1, 0, 1 };
+    static const int dy[] = { 0, 1, 1, 1, 0, -1, -1, -1 };
+    for (int a = 0; a < 8; a++)
+        gfx_draw_line(efb, cx + dx[a] * (r + 3), cy + dy[a] * (r + 3),
+                      cx + dx[a] * (r + 7), cy + dy[a] * (r + 7), 1);
+}
+
+static void draw_cloud(int cx, int cy)   // solid puffy cloud, ~30 wide
+{
+    gfx_draw_circle(efb, cx - 9, cy + 2, 7, 1, 1);
+    gfx_draw_circle(efb, cx + 9, cy + 2, 7, 1, 1);
+    gfx_draw_circle(efb, cx,     cy - 3, 9, 1, 1);
+    gfx_fill_rect(efb, cx - 9, cy + 2, 18, 7, 1);
+}
+
+// Draw a ~40x40 weather icon whose top-left is (x,y). code<0 = unknown.
+static void draw_wicon(int x, int y, int code)
+{
+    int cx = x + 20, cy = y + 20;
+    if (code < 0) { gfx_draw_text_scaled(efb, x + 12, y + 8, "?", font, 1, 3); return; }
+    if (code == 0)               { draw_sun(cx, cy, 9); return; }              // clear
+    if (code <= 3)               { draw_sun(cx - 6, cy - 6, 6); draw_cloud(cx + 4, cy + 6); return; } // partly
+    if (code <= 48) {                                                          // fog
+        for (int i = 0; i < 4; i++) gfx_draw_line(efb, x + 4, cy - 6 + i * 6, x + 34, cy - 6 + i * 6, 1);
+        return;
+    }
+    draw_cloud(cx, cy - 4);
+    if (code <= 67 || (code >= 80 && code <= 82)) {                            // rain
+        for (int i = -1; i <= 1; i++) gfx_draw_line(efb, cx + i * 8, cy + 8, cx + i * 8 - 3, cy + 16, 1);
+    } else if (code <= 77 || (code >= 85 && code <= 86)) {                     // snow
+        for (int i = -1; i <= 1; i++) {
+            int sx = cx + i * 9, sy = cy + 12;
+            gfx_draw_line(efb, sx - 2, sy, sx + 2, sy, 1);
+            gfx_draw_line(efb, sx, sy - 2, sx, sy + 2, 1);
+        }
+    } else {                                                                   // storm
+        gfx_draw_line(efb, cx + 2, cy + 6, cx - 4, cy + 13, 1);
+        gfx_draw_line(efb, cx - 4, cy + 13, cx + 2, cy + 13, 1);
+        gfx_draw_line(efb, cx + 2, cy + 13, cx - 3, cy + 20, 1);
+    }
+}
+
 // ---- individual widgets (draw into a given box) --------------------------
 static void w_clock(int x, int y, int w, int h)
 {
-    bevel(efb, x, y, w, h, 8);
+    bevel(efb, x, y, w, h, 6);
     rtc_time_t t; int have = (get_time(&t) == 0);
-    char s[32];
-    if (have) snprintf(s, sizeof(s), "%s  %04d-%02d-%02d", WD[t.wday & 7], t.year, t.month, t.day);
-    else      snprintf(s, sizeof(s), "no clock");
-    gfx_draw_text(efb, x + 12, y + 10, s, font, 1);
-    if (have) snprintf(s, sizeof(s), "%02d:%02d", t.hour, t.min);
-    else      snprintf(s, sizeof(s), "--:--");
-    int tw = (int)strlen(s) * 6 * 4;
-    gfx_draw_text_scaled(efb, x + (w - tw) / 2, y + 30, s, font, 1, 4);
+    if (have) {
+        gfx_draw_text_scaled(efb, x + 12, y + 10, WD[t.wday & 7], font, 1, 2);
+        char s[16]; snprintf(s, sizeof(s), "%02d.%02d.%04d", t.day, t.month, t.year);
+        gfx_draw_text_scaled(efb, x + 12, y + 32, s, font, 1, 2);
+    } else {
+        gfx_draw_text(efb, x + 12, y + 22, "no clock", font, 1);
+    }
 }
 
 static void w_weather(int x, int y, int w, int h)
 {
-    bevel(efb, x, y, w, h, 8);
-    gfx_draw_text(efb, x + 12, y + 8, "WEATHER", font, 1);
-    int sx = x + 28, sy = y + 44;
-    gfx_draw_circle(efb, sx, sy, 10, 0, 1);
-    for (int a = 0; a < 8; a++) {
-        static const int rx[] = { 1, 1, 0, -1, -1, -1, 0, 1 };
-        static const int ry[] = { 0, 1, 1, 1, 0, -1, -1, -1 };
-        gfx_draw_line(efb, sx + rx[a] * 14, sy + ry[a] * 14, sx + rx[a] * 19, sy + ry[a] * 19, 1);
-    }
-    int t10, wcode;
-    if (read_weather(&t10, &wcode)) {
+    bevel(efb, x, y, w, h, 6);
+    int t10, code, have = read_weather(&t10, &code);
+    draw_wicon(x + 6, y + 8, have ? code : -1);
+    if (have) {
         char s[16]; int i = t10 / 10, f = t10 % 10; if (f < 0) f = -f;
-        snprintf(s, sizeof(s), "%d.%d C", i, f);
-        gfx_draw_text_scaled(efb, x + w - 100, y + 26, s, font, 1, 3);
-        gfx_draw_text(efb, x + w - 100, y + 54, wcond(wcode), font, 1);
+        snprintf(s, sizeof(s), "%d.%d", i, f);
+        gfx_draw_text_scaled(efb, x + 52, y + 10, s, font, 1, 3);
+        gfx_draw_text(efb, x + 52, y + 38, wcond(code), font, 1);
     } else {
-        gfx_draw_text_scaled(efb, x + w - 90, y + 30, "-- C", font, 1, 3);
-        gfx_draw_text(efb, x + w - 96, y + 56, "run weather", font, 1);
+        gfx_draw_text(efb, x + 52, y + 16, "no data", font, 1);
+        gfx_draw_text(efb, x + 52, y + 32, "run weather", font, 1);
+    }
+}
+
+// TO-DO widget: a peek at the open tasks from the todo app.
+static void w_todo(int x, int y, int w, int h)
+{
+    bevel(efb, x, y, w, h, 6);
+    gfx_draw_text_scaled(efb, x + 10, y + 6, "TO-DO", font, 1, 2);
+
+    static char buf[1024];
+    int n = app_read_file(TODO_PATH, buf, sizeof(buf) - 1);
+    if (n <= 0) { gfx_draw_text(efb, x + 12, y + 30, "(no tasks)", font, 1); return; }
+    buf[n] = '\0';
+
+    int maxrows = (h - 28) / 12; if (maxrows < 1) maxrows = 1;
+    int shown = 0, open = 0, total = 0, s = 0;
+    for (int i = 0; i <= n; i++) {
+        if (buf[i] == '\n' || buf[i] == '\0') {
+            if (i > s) {
+                buf[i] = '\0';
+                const char *l = buf + s;
+                int done = (l[0] == '1'), off = (l[1] == ' ') ? 2 : 0;
+                total++;
+                if (!done) {
+                    open++;
+                    if (shown < maxrows) {
+                        int maxch = (w - 20) / 6 - 4; if (maxch < 4) maxch = 4;
+                        char line[44];
+                        snprintf(line, sizeof(line), "[ ] %.*s", maxch, l + off);
+                        gfx_draw_text(efb, x + 10, y + 26 + shown * 12, line, font, 1);
+                        shown++;
+                    }
+                }
+            }
+            s = i + 1;
+        }
+    }
+    char hdr[16]; snprintf(hdr, sizeof(hdr), "%d/%d", total - open, total);
+    gfx_draw_text(efb, x + w - 44, y + 8, hdr, font, 1);
+    if (open == 0) gfx_draw_text(efb, x + 12, y + 26, "all done!", font, 1);
+    else if (open > shown) {
+        char more[16]; snprintf(more, sizeof(more), "+%d more", open - shown);
+        gfx_draw_text(efb, x + 10, y + 26 + shown * 12, more, font, 1);
     }
 }
 
 typedef void (*wdraw_t)(int, int, int, int);
-typedef struct { const char *id; int h; wdraw_t draw; } widget_t;
+typedef struct { const char *id; int cols; int h; wdraw_t draw; } widget_t;
 static const widget_t WIDGETS[] = {
-    { "clock",   92, w_clock   },
-    { "weather", 76, w_weather },
+    { "clock",   1, 62, w_clock   },
+    { "weather", 1, 62, w_weather },
+    { "todo",    2, 86, w_todo    },
 };
 #define NWIDGETS ((int)(sizeof(WIDGETS) / sizeof(WIDGETS[0])))
 
 static int  layout[8], nlayout;    // ordered widget indices (top -> bottom)
+static int  lcols[8];              // per-slot width in columns (1 = half, 2 = full)
 static int  editing, pick;         // layout edit mode + picked slot
 
 static int widget_by_id(const char *id, int len)
@@ -169,21 +254,42 @@ static void load_layout(void)
         int s = 0;
         for (int i = 0; i <= n && nlayout < 8; i++) {
             if (buf[i] == ',' || buf[i] == '\n' || buf[i] == '\0') {
-                int wi = widget_by_id(buf + s, i - s);
-                if (wi >= 0) layout[nlayout++] = wi;
+                if (i > s) {                           // entry is "id" or "id:cols"
+                    int idlen = i - s, c = 0;
+                    for (int j = s; j < i; j++)
+                        if (buf[j] == ':') {
+                            idlen = j - s;
+                            for (int k = j + 1; k < i; k++)
+                                if (buf[k] >= '0' && buf[k] <= '9') c = c * 10 + (buf[k] - '0');
+                            break;
+                        }
+                    int wi = widget_by_id(buf + s, idlen);
+                    if (wi >= 0) {
+                        layout[nlayout] = wi;
+                        lcols[nlayout] = (c == 1 || c == 2) ? c : WIDGETS[wi].cols;
+                        nlayout++;
+                    }
+                }
                 s = i + 1;
             }
         }
     }
-    if (nlayout == 0)                                  // default: registry order
-        for (int i = 0; i < NWIDGETS; i++) layout[nlayout++] = i;
+    // Append any registered widgets not already in the saved layout, so new
+    // widgets (e.g. after an update) appear automatically instead of staying
+    // hidden behind an old home.conf.
+    for (int i = 0; i < NWIDGETS && nlayout < 8; i++) {
+        int found = 0;
+        for (int j = 0; j < nlayout; j++) if (layout[j] == i) { found = 1; break; }
+        if (!found) { layout[nlayout] = i; lcols[nlayout] = WIDGETS[i].cols; nlayout++; }
+    }
 }
 
 static void save_layout(void)
 {
-    char buf[80]; int n = 0;
-    for (int i = 0; i < nlayout && n < (int)sizeof(buf) - 12; i++)
-        n += snprintf(buf + n, sizeof(buf) - n, "%s%s", i ? "," : "", WIDGETS[layout[i]].id);
+    char buf[96]; int n = 0;
+    for (int i = 0; i < nlayout && n < (int)sizeof(buf) - 16; i++)
+        n += snprintf(buf + n, sizeof(buf) - n, "%s%s:%d",
+                      i ? "," : "", WIDGETS[layout[i]].id, lcols[i]);
     buf[n++] = '\n';
     app_write_file(LAYOUT_PATH, buf, n);
 }
@@ -199,19 +305,34 @@ static void draw_home_eink(void)
         }
     gfx_draw_rect(efb, 1, 1, ew - 2, eh - 2, 1, 1);
 
-    int wx = 10, ww = ew - 20, yy = 24;
+    // 2-column flow layout: cols=1 widgets pack two-per-row (side by side),
+    // cols=2 widgets take a full row.
+    const int m = 10, gap = 8, top = 24;
+    const int fullw = ew - 2 * m, halfw = (fullw - gap) / 2;
+    int yy = top, slot = 0, rowh = 0;                  // slot 0 = left free, 1 = right free
     for (int i = 0; i < nlayout; i++) {
         const widget_t *wg = &WIDGETS[layout[i]];
-        gfx_fill_rect(efb, wx, yy, ww, wg->h, 0);      // opaque over wallpaper
-        wg->draw(wx, yy, ww, wg->h);
-        if (editing && i == pick)                      // highlight the picked widget
-            gfx_draw_rect(efb, wx - 2, yy - 2, ww + 4, wg->h + 4, 2, 1);
-        yy += wg->h + 12;
+        int wx, ww, wy;
+        if (lcols[i] >= 2) {
+            if (slot == 1) { yy += rowh + gap; slot = 0; rowh = 0; }   // close a half-row
+            wx = m; ww = fullw; wy = yy;
+            yy += wg->h + gap;
+        } else if (slot == 0) {
+            wx = m; ww = halfw; wy = yy; slot = 1; rowh = wg->h;
+        } else {
+            wx = m + halfw + gap; ww = halfw; wy = yy;
+            if (wg->h > rowh) rowh = wg->h;
+            yy += rowh + gap; slot = 0; rowh = 0;
+        }
+        gfx_fill_rect(efb, wx, wy, ww, wg->h, 0);      // opaque over wallpaper
+        wg->draw(wx, wy, ww, wg->h);
+        if (editing && i == pick)
+            gfx_draw_rect(efb, wx - 2, wy - 2, ww + 4, wg->h + 4, 2, 1);
     }
 
-    if (editing) gfx_draw_text(efb, (ew - 30 * 6) / 2, eh - 14,
-                               "EDIT: up/down move  ESC save+exit", font, 1);
-    else         gfx_draw_text(efb, (ew - 24 * 6) / 2, eh - 14,
+    if (editing) gfx_draw_text(efb, (ew - 34 * 6) / 2, eh - 12,
+                               "EDIT: L/R pick U/D move w width ESC", font, 1);
+    else         gfx_draw_text(efb, (ew - 24 * 6) / 2, eh - 12,
                                "v apps   e edit layout", font, 1);
     duo_eink_commit(d);
 }
@@ -289,7 +410,16 @@ int main(int argc, char *argv[])
             if (page == PAGE_HOME) {
                 oled_clock();                           // live seconds
                 rtc_time_t t;
-                if (get_time(&t) == 0 && t.min != last_min) { last_min = t.min; draw_home_eink(); }
+                int have = (get_time(&t) == 0);
+                // Force the wallpaper a few times right after start (heals a
+                // boot-time race where the first e-ink commits didn't reach the
+                // panel — the eink driver re-sends the full frame during its boot
+                // heal window); after that, redraw only when the minute changes.
+                if (boot_redraws > 0 || (have && t.min != last_min)) {
+                    if (boot_redraws > 0) boot_redraws--;
+                    last_min = have ? t.min : -1;
+                    draw_home_eink();
+                }
             }
             continue;
         }
@@ -299,11 +429,18 @@ int main(int argc, char *argv[])
                 if (k == 0x1B) { editing = 0; save_layout(); render(); }
                 else if (k == 0xB4) { if (pick > 0) pick--; render(); }              // select prev
                 else if (k == 0xB7) { if (pick < nlayout - 1) pick++; render(); }    // select next
+                else if (k == 'w' || k == 'W') {                                     // toggle width
+                    lcols[pick] = (lcols[pick] == 1) ? 2 : 1; render();
+                }
                 else if (k == 0xB5 && pick > 0) {                                    // move up
-                    int t = layout[pick]; layout[pick] = layout[pick - 1]; layout[pick - 1] = t; pick--; render();
+                    int t = layout[pick]; layout[pick] = layout[pick - 1]; layout[pick - 1] = t;
+                    int c = lcols[pick]; lcols[pick] = lcols[pick - 1]; lcols[pick - 1] = c;
+                    pick--; render();
                 }
                 else if (k == 0xB6 && pick < nlayout - 1) {                          // move down
-                    int t = layout[pick]; layout[pick] = layout[pick + 1]; layout[pick + 1] = t; pick++; render();
+                    int t = layout[pick]; layout[pick] = layout[pick + 1]; layout[pick + 1] = t;
+                    int c = lcols[pick]; lcols[pick] = lcols[pick + 1]; lcols[pick + 1] = c;
+                    pick++; render();
                 }
                 continue;
             }

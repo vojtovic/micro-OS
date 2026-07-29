@@ -78,6 +78,9 @@ static void    *s_spi;        // hardware SPI device handle
 // ghosting low (lower = cleaner but more frequent full-flash).
 #define GHOSTING_LIMIT   3
 static int s_partial_count;
+#define BOOT_HEAL_COMMITS 2      // full re-sends right after start (see eink_commit)
+static int s_boot_heal;
+static int s_force_full;         // one-shot: next present is a forced full refresh
 
 // ---------------------------------------------------------------------------
 // Waveform LUTs — "GC" (full-quality) refresh. Trailing entries are zero;
@@ -454,14 +457,27 @@ static void eink_commit(void)
             if (row > y1) y1 = row;
         }
     }
-    if (y1 < 0) return;   // nothing changed
+    // Boot self-heal: for the first few commits after start, re-send the WHOLE
+    // frame as a full refresh even if nothing changed. A present issued too early
+    // after boot can fail to reach the panel while eink_commit still updates
+    // s_oldbuf — after that, change-detection thinks the panel already shows the
+    // content and only ever repaints small changed bands (e.g. the clock),
+    // leaving the wallpaper missing. Re-sending the full frame heals that.
+    bool heal = (s_boot_heal > 0) || s_force_full;
+    if (s_boot_heal > 0) s_boot_heal--;
+    s_force_full = 0;
+    if (heal) {
+        y0 = 0; y1 = EPD_HEIGHT - 1;   // treat as full-frame change
+    } else if (y1 < 0) {
+        return;                        // nothing changed
+    }
 
     // Force a full GC refresh (clean black/white flash, no ghosting) when either
     // the ghosting counter tripped OR a large fraction of the screen changed —
     // the latter catches whole-screen transitions (opening home, switching
     // pages) so they come up crisp, while small updates (a ticking clock) still
     // use the fast partial/DU path.
-    bool full = (s_partial_count >= GHOSTING_LIMIT) ||
+    bool full = heal || (s_partial_count >= GHOSTING_LIMIT) ||
                 (diff > EPD_BUF_SIZE * 2 / 5);
 #if EINK_PARTIAL
     if (full) {
@@ -497,6 +513,9 @@ static void eink_render(const char *text, size_t len)
         }
     }
     eink_commit();
+    // The console was just shown here — the next GUI present is a new app taking
+    // over the screen, so force it to a clean full refresh (no ghosting).
+    s_force_full = 1;
 }
 
 // GUI path: blit a graphics framebuffer (MONO_HMSB, logical dimensions) onto
@@ -590,6 +609,7 @@ static int eink_start(void)
     epd_gpio_init();
     epd_init();
     eink_clear();
+    s_boot_heal = BOOT_HEAL_COMMITS;   // heal lost presents right after boot
 
     display_mux_register("eink", &s_display_ops);
     vconsole_printf("[eink] Waveshare 3.52\" e-paper ready — rot=%d, %dx%d px, %dx%d chars\n",

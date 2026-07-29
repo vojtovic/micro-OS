@@ -209,16 +209,34 @@ void comp_set_focus(void *task)
     }
 
     // Release displays that have windows but aren't shown by the focused task.
+    // Collect released SLOW displays (e-ink) so we can paint the console onto
+    // them afterwards — the auto-mirror only covers fast displays, so without
+    // this a slow display would keep showing the previous app's stale frame
+    // when focus moves to the shell (or to an app that doesn't use it).
+    char rel_slow[COMP_MAX_WINDOWS][DISPLAY_NAME_LEN];
+    int  nrel = 0;
     for (int i = 0; i < COMP_MAX_WINDOWS; i++) {
         comp_win_t *w = &s_wins[i];
         if (!w->used) continue;
         bool is_shown = false;
         for (int j = 0; j < nshown; j++)
             if (strcmp(shown[j], w->display) == 0) { is_shown = true; break; }
-        if (!is_shown) display_mux_release(w->display);
+        if (is_shown) continue;
+        display_mux_release(w->display);
+        if (!display_mux_is_fast(w->display)) {
+            bool dup = false;
+            for (int j = 0; j < nrel; j++)
+                if (strcmp(rel_slow[j], w->display) == 0) { dup = true; break; }
+            if (!dup) strncpy(rel_slow[nrel++], w->display, DISPLAY_NAME_LEN - 1);
+        }
     }
 
     xSemaphoreGive(s_lock);
+
+    // Paint the console onto each freed slow display (done outside the lock —
+    // an e-ink refresh takes ~2 s).
+    for (int i = 0; i < nrel; i++)
+        display_mux_refresh(rel_slow[i]);
 
     // Schedule the deferred slow (e-ink) redraw; re-arming pushes it back so it
     // fires only once switching settles.
